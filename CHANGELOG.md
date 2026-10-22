@@ -1,0 +1,1572 @@
+# Changelog
+
+All notable changes to Engramory. Versions from 0.1.3 onward are git tags (0.1.0–
+0.1.2 predate the 0.1.3 history consolidation). This is an experimental 0.x project
+— expect rough edges off Claude Code (see SKILL.md §8 / §9).
+
+## 0.12.1 — 2026-09-24
+
+- **"Installs and activates on current dsh builds" had last been checked on rc.7.**
+  The sentence was true when it was written, in August, against dsh 0.1.0-rc.7. dsh
+  then shipped nineteen releases — somewhere along the way its model traffic moved
+  from OpenAI chat completions to the Anthropic Messages API — and nobody ran the
+  plugin on any of them. It still works; the point is that nobody knew. The one
+  directory that asks for proof acted on the gap: DSH-Store (dsh.store) delisted
+  dsh-engramory on 2026-09-21 because no exact compatibility record covered any of
+  dsh's three newest releases. Re-checked end to end on dsh 0.1.5-rc.3 (npm
+  `latest`), 0.1.7-alpha.1, 0.1.7-alpha.2 and 0.1.7-rc.1 (Windows): installed with
+  `dsh plugin add`, the `engramory` row present in the composed profile, the skill
+  advertised to the model, a 260-line write and an edit past the cap refused by the
+  guard through dsh's real tool pipeline with nothing reaching the disk, a 3-line
+  write landing byte for byte, every tool dsh offers accounted for, and a clean
+  `dsh plugin remove`.
+- **The check is now a script, and a compatibility claim now needs it.**
+  `tests/dsh_e2e/run.py` does all of the above for any list of dsh releases with no
+  API key: dsh goes into a throwaway npm prefix and `$DSH_HOME`, and the model's side
+  is `fake_llm.py`, a scripted stand-in for the DeepSeek API that speaks both wire
+  formats. The disk is read after every step, so a host that printed the refusal and
+  wrote anyway could not hide it behind the next write; a tool dsh adds that nobody
+  has classified fails the run until someone decides whether it can write past the
+  cap. `--record` writes the outcome to `tests/dsh_e2e/results.json` with a digest of
+  what dsh loads (code, bundle patch, loading fields). The releases that passed are
+  declared in the plugin's `package.json` under `dsh.compatibility.dshReleases` — the
+  exact-record field DSH-Store reads — and `tests/test_dsh_plugin.py` refuses a
+  `compatible` there unless a passing run of the same plugin version *and the same
+  digest* is on record, and refuses an empty map: neither a version bump nor a quiet
+  code change can carry the claim forward. What it cannot see is dsh shipping newer
+  releases; the harness README says when to re-run. Not in CI: every release is an
+  `npm install` of ~500 packages.
+- **The peer dependency that only ever produced a warning is gone.** dsh-engramory
+  declared `@deepseek-ai/dsh-tools >=0.0.1-rc.1` as a peer. Nothing imports it and no
+  profile carries it as a direct dependency, so every `dsh plugin add` ended with
+  pnpm's "Issues with peer dependencies found". The range directories display moved to
+  `dsh.compatibility.dsh`, which DSH-Store reads before falling back to peers:
+  `>=0.1.0-rc.7 <0.2.0-0`, a display range: its floor is the first build any 0.2.1+
+  ever activated on, its ceiling keeps every 0.2 build — prereleases included — out
+  until a run says otherwise, and only `dshReleases` is a claim that something was run. A test pins the
+  plugin to `node:` imports and no dependency fields.
+- dsh-engramory **0.2.5**. The guard and the skill are untouched: same caps, same
+  refusal, same decision table.
+
+## 0.12.0 — 2026-09-23
+
+- **The store had a size rule for the index and none for anything else.** Found by
+  compacting the author's own store: the index sat comfortably under its caps at
+  126 lines / 18.9 KB, yet 34 of 172 notes were over 15 KB and the largest was
+  57 KB — a `project` note that had grown into a PR-by-PR timeline, costing ~20k
+  tokens on every recall while claiming to be "one fact". Nothing in the protocol
+  or the tools could see that. Two of the four things that went wrong were pure
+  discipline the rules already covered (retire completed work, merge before
+  creating); the other two were measurement gaps, fixed here:
+  - `engramory_doctor.py` now reports **bloated notes** — any note over
+    `ENGRAMORY_NOTE_WARN_BYTES` (default 12 KB), summarised on one line largest
+    first — and **leaky index lines**: an index line whose prose, once its
+    `](path.md)` targets and `[[wikilinks]]` are stripped, exceeds
+    `ENGRAMORY_LINE_WARN_BYTES` (default 200). Measuring prose rather than raw
+    length is the point: a line of six pointers with one-word hooks is fine, one
+    pointer followed by a paragraph is the leak that eats the byte cap while the
+    line count still looks healthy. Both are INFO, exit code unchanged — they
+    measure a symptom, and a store that was clean yesterday stays clean today.
+  - The Claude Code hook adds the same per-line measure as a **nudge only**: when
+    an edit *adds* a leaky line it says so in `additionalContext`, rides along
+    with the existing WARN/OVER text when both apply, and stays silent for an
+    edit that rewrites or removes already-leaky lines (so compaction is never
+    nagged). It never denies for this; only the index caps deny.
+- **A fourth compaction step: split conclusion from history.** SKILL.md §6 had
+  pointer-ify / merge / archive, none of which helps a note that is legitimately
+  live but has accreted its own timeline. Step 4 keeps the slug and rewrites it
+  as the conclusion layer (invariants, decisions, pitfalls, how to resume) and
+  moves the dated record, whole, to `archive/<slug>_history.md` — nothing is
+  deleted, the index line does not change, and recall pays for the conclusion
+  only. Applied to the author's five largest notes: 57 → 9 KB, 56 → 5 KB,
+  51 → 11 KB, 46 → 5 KB, 45 → 16 KB. §6 also states the two budgets in words
+  (one hook + link per index line; a note past ~12 KB is a timeline), and the
+  same sentence reaches `rules-snippet.md` and the Kiro steering file.
+- `engramory_check.py` refuses a directory argument with EX_USAGE instead of
+  answering it. `os.path.getsize` on a directory returns the directory entry's
+  own size (48 KB for a big one on NTFS), which sailed past the byte cap and
+  printed a confident OVER about an index that was never read; a caller that
+  passed `memory/` instead of `memory/MEMORY.md` acted on that fabricated verdict.
+- 12 new tests (doctor: bloated note, threshold override, leaky line, pointer-heavy
+  line not flagged, wikilinks count as pointers; hook: nudge within caps, never
+  denies, silent on rewrite / removal / pointer-heavy line, rides along with WARN,
+  env override). `hooks/INSTALL.md` documents the new variable.
+
+## 0.11.0 — 2026-09-08
+
+- **A store of conclusions had no way back to the evidence.** Engramory deliberately
+  keeps curated facts rather than raw history: a note says *the retry wrapper must
+  stay — it is a correctness fix*, not the session where that was worked out. That is
+  the right trade for recall, but it leaves three questions unanswerable from the
+  store alone — what was the reasoning behind this terse note, is this stale one still
+  true, and what was discussed but never written down. New `tools/engramory_trace.py`
+  searches the host's own transcripts for exactly those cases: `engramory_trace.py
+  "streaming parser"` to find where a topic was argued, `--show <session-id>` to
+  replay one session (which lands directly on the origin session where the host
+  stamps one onto a note). Local and read-only — nothing is uploaded, indexed, or
+  embedded, and the store itself is never touched.
+- **Scoped as a convenience, not a protocol change.** `SKILL.md` does not mention it
+  and does not need to: unlike `engramory_check.py` / `engramory_doctor.py`, which
+  exist to *enforce* the index cap and the write rules, nothing in the discipline
+  depends on this tool. It is also Claude Code only — it parses that host's JSONL
+  layout — so putting it in a protocol that is otherwise host-agnostic would hand
+  other hosts an instruction they cannot follow. Documented in `README.md` under the
+  Claude Code install instead.
+- Two behaviors worth naming, both learned the hard way against a real store. It
+  searches **only what was said** by default (`--tools` opts tool calls and output
+  back in): in a tool-heavy session the large majority of `user` records are tool
+  results, and a host that re-injects standing context every turn means a term drawn
+  *from* a memory otherwise matches dozens of copies of that memory's own history.
+  And it prefilters with a **byte scan rather than shelling out to ripgrep** — `rg` is
+  absent from many real PATHs (it often exists only inside a host's bundled
+  environment), so that call silently degrades to parsing every transcript; worse, two
+  matching engines means two case-folding rules, and anything the external filter
+  drops the Python matcher never sees.
+
+## 0.10.1 — 2026-08-31
+
+- **"At the start of a task" had no lower bound, so a greeting was a task.** Every
+  standing surface told the agent to recall at the start of a task and to run a
+  completion checkpoint at the end of one, and nothing in the protocol said what is
+  *not* a task. On a host with native auto-memory that costs nothing visible — the
+  index is already in context — so the gap stayed invisible for as long as the
+  project has had it: the recall clause dates to the first commit, not to 0.10.0's
+  new checkpoint. Off such a host it is a real file-tool call, and behind a chat
+  bridge that gives every incoming message its own session, a bare "hi" bought a cold
+  start and a full tool chain before anyone got an answer. `SKILL.md` §4 now opens
+  with **what counts as a task**: a turn, a message, or a session is not by itself
+  one; a task is user-directed work whose handling could depend on what the store
+  holds, read-only work (analysis, diagnosis, planning, review) included. §5 adds the
+  mirror clause — the end of a turn is not task completion, and an empty checkpoint
+  never justifies opening the store.
+
+- **Two clauses keep the fix from becoming an escape hatch.** Neither is decoration:
+  a first draft shipped without the second and cross-model review took it apart.
+  *Length decides nothing* — a one-word reply that picks an option or carries on work
+  underway inherits that task, so "1" answering "which of these three?" is the middle
+  of a task, not small talk. *Material in hand decides nothing* — a diff pasted for
+  review is a task even though every line needed to answer it is on screen; what the
+  store holds is not the diff, it is how you are meant to review one. Without that
+  second clause the exemption swallowed exactly the read-only work the paragraph
+  above it had just called a task.
+
+  One consequence is deliberate and worth stating plainly: **an isolated "1" with no
+  visible context still recalls.** An ambiguous short input is resolved by what the
+  conversation was already doing, and treated as a task when that is unclear — a
+  needless recall costs a little context, a missed one costs the discipline. Making
+  small talk cheap on a per-message bridge is the bridge's job, not the protocol's.
+  A rule keyed on "no resolvable request and no visible task context" could exempt
+  that "1" without ever measuring length; this one deliberately does not, because in a
+  per-message session the previous turn is invisible by construction and guessing
+  wrong there skips the discipline silently. A policy choice, not a logical necessity.
+
+- **The bound reaches every surface an agent actually reads.** `rules-snippet.md`,
+  the Kiro steering template, and the dsh plugin's registered skill body carry it;
+  the read-only reader snippet gets the recall half only and stays free of a write
+  side. It is also in `SKILL.md`'s frontmatter and the dsh skill metadata, because
+  those descriptions drive implicit selection on a progressive-disclosure host — an
+  unbounded trigger there invites the same over-firing the block exists to stop.
+  `tests/test_protocol_sync.py` and `adapters/dsh/plugin/test.js` assert long whole
+  phrases rather than keywords, and pin the inversions review turned up — a shorter
+  version of these assertions passed a text reading "it is false that a turn is not by
+  itself a task … infer it from length". They are still substring checks and the test
+  now says so: they catch a rule deleted, reworded past recognition, or drifted on one
+  surface, which is the failure that file exists for. They do not prove the prose
+  around them agrees, and a snippet written to contradict itself is a review problem,
+  not something an assertion settles.
+
+- **The derived surfaces had quietly widened the rule.** The authority text says a
+  task is work whose *correct* handling could depend on what the store holds; the
+  snippets and the dsh body said "whose handling", which is a different set — "output
+  OK verbatim" has a settled correct answer the store cannot change, yet an agent can
+  always argue its *handling* might depend on a style preference. All five now match
+  `SKILL.md`, and the wording is asserted, since a derived surface drifting from the
+  authority is the exact failure `test_protocol_sync.py` was written for.
+
+- **Codex adapter: what a chat bridge actually pays for.** A new section separates the
+  two costs, because only one of them is this protocol's. Engramory decides whether a
+  message is a task; the *bridge* decides whether a message starts a Codex session at
+  all, and a session that has already begun cannot be made cheap by any wording in
+  `AGENTS.md`. It also flags that the optional `UserPromptSubmit` hook has no matcher
+  — on a per-message bridge its bookkeeping runs per message — and suggests leaving
+  the hooks out of that kind of install. `README.md` and `README.zh-CN.md` point at it
+  from the Codex install step.
+
+- dsh-engramory **0.2.4** ships the same bound in its registered skill body and in the
+  metadata a host matches on. The guard is untouched: same caps, same refusal, same
+  decision table.
+
+## 0.10.0 — 2026-08-20
+
+- **A task-completion checkpoint (new protocol).** The spec had a transition sync —
+  before a compact, a clear, a new thread — and the retirement rule inside the narrow
+  live-note exception, but nothing that said what to do at the ordinary end of an
+  ordinary task. `SKILL.md` §5 now names one: promote what the task settled, retire the
+  transient state *that task's* live `project` note is carrying, and **write nothing**
+  when nothing qualifies. It is a judgement, not a write, and an empty checkpoint is a
+  complete checkpoint — the point is to make the decision, not to leave a trace. Two
+  clauses exist because of how this fails in practice: never append a per-turn log **to
+  the store**, and never touch a file just to mark it fresh. A store that records having
+  been updated without recording anything worth updating is worse than one that stayed
+  still. A host hook can prompt this; nothing can perform it (§8).
+
+- **Write-side rules that had not reached the layer agents actually read.** The flat
+  store layout was in `SKILL.md` and in no snippet at all; the narrow one-live-note
+  exception had reached the Kiro steering template but neither `rules-snippet.md` — the
+  one every installed write host renders from — nor the dsh plugin. The snippet is what
+  an agent has in front of it on the turn it writes; the spec is a document it may never
+  open. All three surfaces now carry both, alongside the new checkpoint. The read-only
+  reader snippet gets the layout sentence only: a recalling agent needs to know where
+  notes live and has no write side to govern. `README.md`, `README.zh-CN.md`,
+  `PORTING.md`, and the Kiro and Codex adapter READMEs carry the same rules, so a human
+  reading any install path sees what the agent was told.
+
+  Wording that a first pass got wrong, and that the tests now pin:
+
+  - **`at most one`, never `exactly one`.** The spec says a task *may* keep one live
+    note. "Exactly one" would make a note mandatory for every unfinished task and
+    contradict "when nothing is worth keeping, write nothing" three bullets later. It is
+    a ceiling, not a quota — and `SKILL.md` §1/§2 now say `at most one` too, so the
+    ceiling reads identically everywhere instead of being paraphrased per host.
+  - **Flat, without disowning `archive/`.** "The store is one flat directory —
+    `MEMORY.md` plus one file per note" is not true: `archive/` is part of the protocol,
+    and the doctor treats an index pointer into it as legitimate. Read-only hosts were
+    the acute risk — an agent told the store is flat could refuse a valid
+    `archive/…` pointer as an escape. The claim is now scoped to the **active** store,
+    with `archive/` named as its one reserved subdirectory.
+  - **The per-turn-log ban is scoped to the store.** Unqualified, "never append a
+    per-turn log" reads as a whole-project prohibition and contradicts the runbook, which
+    explicitly allows a scratch coordination file as long as it is not wired into the
+    store.
+
+- **The completion checkpoint is also a load trigger.** A rule that only fires when a
+  task ends is useless on a host that loads the skill by relevance unless the skill says
+  so: `SKILL.md`'s frontmatter and the dsh plugin's `description` / `whenToUse` now name
+  task completion, explicitly including the case that leaves nothing worth saving —
+  that one still has a decision in it, and it is the case a "save durable facts" trigger
+  never matches.
+
+- **`AGENT-SETUP.md`: a fit check before the survey.** New Step 3b. Some of what people
+  mean by "shared agent memory" is a per-turn coordination log or a concurrent team
+  handoff channel — append-only, high-frequency, no judgement about what survives, and
+  against the one-writer assumption. Naming which half Engramory covers costs a
+  paragraph before the install and prevents a specific outcome: adopting it for
+  turn-by-turn handoff, finding the discipline too heavy for that job, and concluding it
+  is too heavy in general, having never used it for the job it does.
+
+- **The missing-snippet failure, folded into Step 4 rather than given its own step.**
+  Step 4 already owned this ground — the four states (`present` / `configured` /
+  `active` / `verified`), the "half install looks like a working one" trap, and the rule
+  that a deliberate deviation is asked about, never corrected. A parallel section
+  restated all three in fresh words, which is how two sections drift apart. What was
+  genuinely new now lives in that existing bullet: *why* this layer is the one that gets
+  skipped (it is the only one that leaves no trace), that it is reported on its own line
+  and never folded into "installed", and two runs of the failure — this project ran for
+  weeks with the skill and hook installed and the snippet never pasted in, and a
+  downstream team that deliberately dropped the snippet later reported agents "never
+  maintained" the store and published a lighter rewrite of the protocol, diagnosing
+  content they had removed from their agents' context. Stated carefully: where a host
+  loads the skill by relevance the discipline can still reach a task, so a missing
+  snippet means **no longer guaranteed**, not "never applies".
+
+- **Regression net for the drift class itself.** 0.6.x shipped a protocol change that
+  reached the spec and stopped there. `tests/test_protocol_sync.py` now asserts each
+  rule across every markdown standing surface by whole phrase rather than by keyword —
+  "flat" and "subdirectories" both appear in a sentence that says the opposite, so a
+  keyword pair proves nothing — checks that `SKILL.md` remains the authority for every
+  rule a snippet states, and fails when an `adapters/**` snippet or steering file exists
+  that no list mentions. The dsh surface is asserted in `adapters/dsh/plugin/test.js`
+  against the **registered** skill content, where a comment or dead code cannot satisfy
+  it; a Python test keeps that coverage from quietly disappearing.
+
+- `dsh-engramory` 0.2.3 — the registered skill body carries the rules above, and the
+  skill's `description` / `whenToUse` now name task completion, so what the plugin
+  serves a model has changed. The guard is untouched: same caps, same refusal, same
+  decision table.
+
+## 0.9.0 — 2026-08-19
+
+- **`--uninstall`: the wiring can be taken back out.** Re-running any host with
+  `--uninstall` reverses exactly what `init` wrote — its marked block in the rules
+  file (or the dedicated file a Cursor/Kiro reader owns outright), the copied skill
+  tree, and the managed Codex hooks — and `--dry-run` prints the plan first. THE
+  MEMORY STORE IS NEVER TOUCHED, nor is its `.gitignore` entry: the notes are the one
+  artefact here that cannot be regenerated from this repo. Where install and uninstall
+  deliberately differ is the fallback: `_replace_block` may REPAIR a malformed marker
+  file because it must end with a correct block present, while uninstall deletes from
+  user-owned files and so leaves anything ambiguous byte-identical and says so. A block
+  you must remove by hand is recoverable; content deleted on a guess is not.
+
+- **`--uninstall` could delete the memory store, while reporting that it had not.**
+  `.codex/engramory/` was removed with `rmtree`, and the only thing standing between
+  that and a user's notes was an overlap check against the memory root resolved for
+  the CURRENT run. Nothing persists where the store was installed, so the documented
+  bare `python tools/engramory_init.py codex --uninstall` compared against the default
+  path and deleted a store that had legitimately been created at
+  `--memory-root .codex/engramory` (a plain `init` accepts that layout — the
+  install-time overlap guard only fires for `--install-skill` / `--install-hooks`).
+  The report then printed "Your notes ... are left exactly as they are". Uninstall now
+  deletes the two managed scripts **by name** and `rmdir`s the directory only when
+  nothing else is left, so it no longer needs to know where the store is; anything
+  else in there is kept and named in the report. A shared filename is not ownership
+  either, so each candidate is checked for the `Engramory` header both managed scripts
+  carry: a user's own `engramory_sync.py` at that path survives. Every filesystem call
+  in the delete path now degrades into the report rather than raising — by the time it
+  runs the rules block and the skill are already gone, so an unhandled `OSError`
+  (a locked file, a permission-denied listing, one of the names turning out to be a
+  directory) would have left a half-uninstalled tree and a traceback in place of the
+  summary. Containment is re-checked immediately before each `unlink`, matching the
+  narrowing `_copy_skill` already does. The closing summary only claims the store is
+  untouched when it can actually see it, and otherwise says so and points at
+  `--memory-root`.
+
+  The skill directory had the same hole through a different door. Its fingerprint
+  check proves the directory **is** an Engramory skill install — it says nothing about
+  what else has been put beside it — and `rmtree(skill_root)` then took a store kept
+  at that same path (`--memory-root .agents/skills/engramory`, which a plain init
+  accepts) along with the skill. It now removes its own payload entry by entry
+  (`SKILL.md`, `rules-snippet.md`, `PORTING.md`, `AGENT-SETUP.md`, `LICENSE`,
+  `templates/`, `tools/`, kept in one list shared with the installer) and `rmdir`s the
+  directory only when nothing else remains, so a clean uninstall still leaves nothing
+  behind while a store in there survives and is named in the report.
+
+  Known limits, unchanged and deliberate: the containment re-checks narrow the
+  symlink-swap window rather than closing it (Python has no `dir_fd` on Windows), and
+  a file that cannot be read is treated as *not* ours — kept and reported, since
+  keeping a file we did write costs a line of output while deleting one we did not is
+  unrecoverable.
+
+- **Uninstalling one write host deleted a skill another was still using.** `codex` and
+  `openclaw` resolve the same `.agents/skills/engramory` and the same `AGENTS.md`, so
+  removing either took the shared skill with it: the other host's block stayed in the
+  rules file, the skill it refers to was gone, and nothing said so. The reader/writer
+  form of this collision was already handled (a reader is refused `--install-skill`, so
+  it never deletes one); this is its write-host twin. The skill is now kept, and named
+  as still in use, while any other write host's block is still installed - and removed
+  by the last one to leave.
+
+- **The cap denied the one write that compacts an over-cap index.** When the index
+  exists but cannot be read — a transient lock, a permission problem — the guard has
+  no current size to compare against, so every over-cap write looked like growth,
+  including the whole-file rewrite a user performs to shrink it. The `Edit`/`MultiEdit`
+  path already refused to guess and reported "cap NOT verified" instead; `Write` fell
+  through to the growth comparison and denied on that fiction, telling the user their
+  compaction "would GROW the memory index". It now reports the same non-blocking
+  warning, naming the size the write will produce (which, unlike an edit, is known).
+  A within-caps write against an unreadable index stays silent.
+
+- **dsh-engramory 0.2.1: the plugin could never activate — caught by the first field
+  install (issue #8).** Two bugs, both invisible to the plain-object test mock and both
+  latent while the rc.6 preview blocked third-party installs upstream. The `inject`
+  declaration used the older-Cordis `{ required: [...], optional: [...] }` shape, which
+  the Cordis dsh vendors resolves as waiting for services literally named
+  `required`/`optional` — never provided, so the plugin sat pending forever. And once
+  past that, `apply()` dereferenced `ctx.skills` bare, which Cordis' reflective context
+  forbids for undeclared services (`cannot get property "skills" without inject`). Now:
+  `inject = ['tools']` (every declared service is a hard wait, and the cap must mount on
+  profiles with no skill registry), and the skill registered through a reactive
+  `ctx.inject(['skills'], …)` child — adversarial review of the first cut caught that a
+  one-shot `ctx.get('skills')` probe silently skipped registration whenever the
+  registry's fiber activated later than the plugin's; the reactive form picks the
+  registry up whenever it arrives and ties the registration's disposal to its lifetime.
+  The test mock is replaced by a Proxy that enforces the reflective access rules (a
+  regression to a bare read fails every case in the file; a late-activating registry is
+  pinned by its own case), and the fix verified twice over: the activation matrix —
+  with, without, and with a late-mounted skill registry — against the vendored
+  `@deepseek-ai/cordis` resolver, and end to end on a live dsh 0.1.0-rc.7 web profile,
+  where 0.2.0 reproduces the reported boot failure byte for byte and 0.2.1 boots and
+  serves. Docs that still said "not installable
+  upstream" were swept in the same pass: installs work on current dsh builds, which is
+  exactly how the bug surfaced. (adapters/dsh/plugin/, published as `dsh-engramory`
+  0.2.1)
+
+- **dsh-engramory 0.2.2: an unrelated `MEMORY.md` in any other project was refused,
+  with no way out.** The guard matched on basename alone, so a legitimate write to
+  some other repo's `MEMORY.md` (or, on Linux, a lowercase `memory.md`) got a real
+  refusal telling the user to compact a file that is not a memory index — and
+  retargeting `indexName` to dodge it would have left the real index unguarded. The
+  Claude Code hook has had `ENGRAMORY_INDEX_PATH` for this; the plugin now has its
+  counterpart, `indexPath`, which pins the guard to exactly one file (compared by
+  identity: symlinks and `..` resolved, case-folded on Windows only, with a path that
+  does not exist yet still guarded on its first write). Basename matching is unchanged
+  when it is unset, and an unpinned refusal now carries the way out in its own text.
+
+  Identity is resolved through the deepest ancestor that exists rather than through a
+  plain `resolve()` fallback: pinning an index that does not exist yet, under a
+  symlinked ancestor, otherwise keyed it by its alias at config time and by the link's
+  target on every later call — the two never matched again and the guard silently
+  stopped gating its own index once the file was created. The pinned-path check also
+  runs only after the tool has been classified as one that can be refused, so a `read`
+  or an unknown tool still costs nothing but two string compares, and a refusal names
+  the pinned file rather than an `indexName` that is being ignored.
+
+- **Root discovery manifest.** Registry crawlers (plugin.dshdesk.com and the
+  `awesome-dsh-plugin` review bar before it) verify a `dsh.bundle` object in the
+  repo-ROOT `package.json` — the ecosystem's de-facto convention, and this repo kept
+  failing it because the real manifest lives in `adapters/dsh/plugin/`. The root now
+  carries a `private: true` manifest pointing at the same bundle patch the plugin
+  ships (never published from the root; npm publishing stays in the plugin dir), and
+  a test pins root and plugin name/version/patch in step so the duplicate cannot
+  drift. Repo also gained the `dsh-plugin` GitHub topic the crawlers key on.
+
+- **A second `init` changed the rules file for no reason.** Replacing the managed block
+  appended a blank-line separator even when the block ended the file, so the first
+  re-run added one blank line and every later run preserved it — a one-line diff
+  appearing out of nowhere in a file people keep in git. Both paths now end a
+  file-final block the same way.
+
+- The dsh plugin now ships a Chinese README. The community directories render the
+  README of the directory their entry points at (`adapters/dsh/plugin`) and look for a
+  translation **only in that same directory**, so the repo-root `README.zh-CN.md` was
+  never going to be found — the listing correctly reported the plugin as English-only
+  while most of its readers are Chinese-speaking. Two tests keep the pair honest: the
+  config tables must document the same field names, and the translation must survive
+  the directories' own language sniff (CJK ratio > 3%) in both directions.
+
+- Docs: the install note now says which interpreter to use where (`python3` on
+  macOS/Linux, `python` on Windows where `python3` is often a Store stub) instead of
+  parenthesising it, since every command below it is written as `python`.
+
+## 0.8.0 — 2026-08-16
+
+- **Index guard: read stdin as raw UTF-8 bytes (P0).** The Claude Code guard read its
+  payload through the locale TEXT stream. On a cp936/cp1252 Windows host a real CJK
+  payload either raised `UnicodeDecodeError` — falling open through the blanket
+  handler, hard cap silently OFF — or "decoded" as mojibake whose re-encoded size ran
+  ~1.5× the truth (false denies of compliant writes). The Codex hook had carried the
+  correct pattern all along (`_configure_console`); the flagship guard never got it,
+  and the suite could not see the hole because `json.dumps` defaults to
+  `ensure_ascii=True` — every test payload was pure ASCII. Now: `sys.stdin.buffer` +
+  explicit UTF-8 decode, plus two raw-bytes CJK regression tests.
+  (hooks/engramory_index_guard.py)
+
+- **dsh-engramory 0.2.0: the guard's decision table now matches the protocol.** All
+  latent (the plugin is not yet installable upstream), all real: a shrinking rewrite
+  of an over-cap index was refused (210 → 205 blocked — incremental compaction, the
+  documented escape, was impossible); every tool naming the index was treated as a
+  partial write, so `read` of an over-cap index was refused — recall died exactly when
+  compaction was needed; `str_replace_editor` (arguments `path`/`file_text`) bypassed
+  the guard entirely; the basename compare was case-sensitive; `indexName: ""`
+  silently disabled the guard; a sub-1 cap floored to zero. The guard now mirrors the
+  Python hook's rule — deny only a result that is over a cap AND grew — simulates
+  `old_str`/`new_str` edits, gates only known mutating tools, and validates its
+  config. 21 `node --test` cases pin the new table. (adapters/dsh/plugin/)
+
+- **dsh installer: three installed-but-inert paths.** `$DSH_HOME` was ignored (config
+  written to a `~/.dsh` dsh never read when the env var was set); a `--project-root`
+  skill install landed in `<project>/skills/`, which dsh does not scan (the scanned
+  project roots are `.dsh/skills` / `.agents/skills`); and the user-global block
+  rendered RELATIVE store/checker paths, which dsh's file tools resolve against the
+  session cwd — pointing into whatever repo the session ran in. Global blocks now
+  render absolute paths. (tools/engramory_init.py)
+
+- **CI now runs all seven suites.** `test_codex_hooks`, `test_codex_init`,
+  `test_protocol_sync` and `test_dsh_plugin` were never wired into the workflow — and
+  the dsh READMEs claimed its suite ran in CI while `python tests/test_dsh_plugin.py`
+  exited 0 having run NOTHING (pytest-only import, no script entry; `test_codex_init`
+  had the same silent-zero shape). Both gained zero-dependency script runners; the dsh
+  suite shells to `node --test` and skips gracefully without node.
+  (.github/workflows/test.yml)
+
+- **Generated blocks stopped carrying the human install header.** Every snippet opens
+  with instructions for the PERSON pasting it; the installer rendered that into the
+  block the AGENT reads each session — on a non-Claude host directing the model at a
+  `CLAUDE.md` its host never reads (a captured dsh request confirmed it reached the
+  model). (Recorded late — the fix shipped as d23de74.)
+
+- **Three tool P1s from the audit.** The doctor now reports a directory it cannot
+  enumerate instead of silently skipping it (a permissions-locked subdir hid its notes
+  from every check and the store reported clean); the reader installer refuses a
+  `MEMORY.md` symlink that resolves outside the store, so root confinement holds on
+  the read-only path too (`is_file()` follows symlinks and accepted it); and the
+  Codex-hook state's dropped-session counter coerces an int-valued string/float back
+  instead of zeroing it — its docstring said "never silently reset" while the code
+  did exactly that on the next persist.
+
+- **Doc sync after the cross-model audit.** Known-limitations in both READMEs no
+  longer claim there is "no `scope`" (the optional field shipped); PORTING.md and
+  hooks/INSTALL.md now list the dsh adapter, helper and dsh-reader; the Chinese README
+  gained the dsh section it was missing; the knowledge-README template no longer
+  references a topic "list below" it deliberately does not keep; the doctor's no-scope
+  INFO now says "label the ones you KNOW" instead of urging a guess; optional `scope`
+  reached the condensed rules-snippet and Kiro steering frontmatter lists.
+
+- **`dsh-engramory` — the cap, as an actual plugin.** The AGENTS.md adapter makes the
+  discipline visible inside dsh; what it cannot do is make the index cap *real*.
+  `ctx.tools.guard()` can: a synchronous, **monotonic** refusal — once a guard returns a
+  reason, no later listener can turn it back into an allow. `adapters/dsh/plugin/` is that
+  guard, plus `ctx.skills.register()` so the protocol arrives with the plugin instead of
+  depending on a skill root being spelled right. Zero-dependency ESM, no build step; the
+  `node --test` suite pins the decision table (including the trailing-newline off-by-one
+  that would refuse a legitimate at-cap index).
+
+  Outside Claude Code, dsh is the first host with the cap shim actually written —
+  enforced once the plugin is installed and running (Kiro / Hermes / Cursor expose
+  equivalent pre-write seams, but no shim exists for them yet).
+  It is **not yet installable**, and that is upstream: `dsh plugin`
+  shells out to a `pnpm` it does not bundle, and a direct `pnpm add` then dies on
+  `ERR_PNPM_FETCH_404` for `@deepseek-ai/dsh-type-meta` — a package the published tree
+  depends on but the registry does not carry. Preview packaging, not a plugin defect.
+  Published to npm as 0.1.0/0.1.1 (0.1.0 shipped without the `dsh.bundle` manifest and
+  installed inert; 0.1.1 fixed that); the 0.2.0 guard overhaul went to npm on
+  2026-08-16, just after the 0.8.0 stamp. (adapters/dsh/plugin/README.md)
+
+- **DeepSeek Harness (dsh) adapter.** dsh opened as a developer preview on 2026-08-13 with
+  the two rails this protocol needs and no memory system of its own: `agent-instructions`
+  loads a hardcoded `["AGENTS.md", "CLAUDE.md"]` candidate list every session, and
+  `dsh-skill-filesystem` scans five skill roots. `engramory_init.py dsh` wires both, and
+  `dsh-reader` joins the read-only hosts.
+
+  Dogfooding it turned up what reading alone had missed: dsh's *user* skill root is
+  `<DSH_HOME>/skills`, not `.agents/skills` beneath it — and installing into the wrong one
+  fails **silently**, because the copy lands and the host simply never lists the skill. The
+  installer's skill path is no longer hardcoded (`skill_dir`, per host). An earlier claim
+  that dsh "cannot auto-discover skills" came from a package-name search that missed
+  `dsh-skill-filesystem`; it was wrong, and it is gone.
+
+  Verified against `@deepseek-ai/dsh@0.1.0-rc.6` by pointing `DEEPSEEK_BASE_URL` at a local
+  recording endpoint and reading the payload dsh actually sent — no provider key involved:
+  the block arrives as a `<system-reminder>` sourced `Instructions from: $DSH_HOME/AGENTS.md`,
+  a project-level `AGENTS.md` loads after it, and `engramory` appears in the session's
+  advertised skill catalog.
+
+  Then against the real API (`deepseek-v4-flash`): asked a question answerable only from a
+  stored note — with no mention of memory in the prompt — the model opened that note and
+  answered from it; told one durable fact, it wrote a conforming `feedback` note, added the
+  pointer line, ran the checkers, and reported the sync. `engramory_doctor.py` re-run
+  independently agreed. It even set `scope: global`, which the always-on block never
+  mentions, so it had read the full protocol through the installed skill. Two runs are not
+  a reliability claim, but the protocol is not Claude-only. (adapters/dsh/README.md)
+
+- **`scope: global | repo`, optional.** `type` said what kind of memory a note is;
+  nothing said how far it reaches. The two are orthogonal, and conflating them is what
+  makes `feedback`/`project` the most misfiled pair in the protocol — with asymmetric
+  costs: a repo-only rule left global leaks into other projects, where it is simply
+  wrong and keeps applying until someone notices; a genuinely global rule filed as
+  repo-local state is archived when that project wraps and is then lost for good.
+  Absence is never an ISSUE — the field postdates existing stores, and an unlabelled
+  reach beats a guessed one — but an invalid value is, because a typo claims a reach
+  nothing enforces. `feedback`/`project` with no scope get an INFO nudge; `user` and
+  `reference` get none, or every pre-existing store drowns in noise. Deliberately kept
+  out of `MEMORY.md`: it governs curation, not recall, and index lines are under a hard
+  budget. (SKILL.md §2.1)
+
+- `AGENT-SETUP.md` Hard rule 4 now bounds *reading*, not just repeating. It forbade
+  echoing note bodies but said nothing about how much to open, so a run that behaved
+  correctly still `cat`-ed every note to establish how many there were — private notes
+  read for no gain. Counting, structure and cap questions are answered by the index and
+  by frontmatter. (Found by a Claude Code agent walking the runbook, which flagged its
+  own excess.)
+
+## 0.7.0 — 2026-07-27
+
+`AGENT-SETUP.md`: a runbook for the agent being asked to install this.
+
+Every existing document assumes a human reader, or an agent that is already set up —
+`SKILL.md` is the protocol you follow *after* installation. But the common case is a
+user telling an agent "install this for me", and that agent then has to work out, on its
+own, which host it is on, what that host can actually enforce, whether a store already
+exists, and what may not be touched. Nothing carried that procedure, so it was improvised
+every time — and the improvisation went wrong in consistent, predictable ways.
+
+The content is drawn from watching a non-Claude agent actually attempt it, repeatedly.
+Each rule below is there because a real run got it wrong first:
+
+- **Two gates, deliberately asymmetric.** Gate 1 (survey) is a *disclosure*: state the
+  scope and proceed. Gate 2 (write) is a hard stop. Making both blocking looked safer and
+  was strictly worse — whenever nobody answers, a batch run, a CI job, a user who walked
+  away, the entire procedure returned **nothing**. An agent cannot detect that case
+  either: from the inside, an unattended run is indistinguishable from a conversation.
+- **Do not edit existing notes — "not in bulk" was not enough.** Told only that, agents
+  reasoned that one note was not a bulk edit and offered to fix it. The rule now covers a
+  single note, and forbids the framing too: a store with legacy notes is *working*, and
+  calling it "unhealthy" or "90% correct" pressures a non-technical user into authorizing
+  edits to their own history — which the agent cannot do correctly anyway, because file
+  mtime is not when the fact was last true.
+- **The doctor's `fix …:` hints are advice for a human, not a task list.** Agents read
+  them as a backlog and offered to burn it down.
+- **Find an existing store before proposing a new one.** Offered as equal options, an
+  agent suggests whatever directory it happens to be running in — and a user who already
+  has a store ends up with two, the old one orphaned. Quiet, and worse than not
+  installing.
+- **Report to a human, not a diagnostic dump.** Rungs, four-state tables and
+  `97 lines / 19.6 KB` mean nothing to the person who asked. Lead with the verdict, use
+  their units, and only raise what changes what they do. Also: answer what you can answer
+  — a cheap non-destructive check belongs in your report, not in a list of open questions
+  for them to resolve.
+- **Verify before reporting.** "Configured" and "fires" are different claims; only the
+  second is worth anything.
+- **Say when you cannot see their machine.** From a sandbox, every "not installed" is a
+  false negative that sends the user to reinstall what they already have.
+
+Also
+- The runbook ships with `--install-skill`, and each host's standing-rules block now
+  points at it — an agent asked to check or repair an install needs it exactly then, when
+  the original checkout is usually long gone. Without that pointer it was read in 1 of 3
+  runs, purely by chance.
+
+## 0.6.4 — 2026-07-27
+
+The deferred P2 tier from the 0.6.1–0.6.3 audits, cleared. A cross-model review of
+the proposed fixes then refuted most of them and surfaced four defects that were
+not on the list — including two that destroy data — so this release is larger than
+the backlog it set out to close. Every defect below is reproduced by a new test,
+except the two hardening items with no deterministic repro: the narrowed TOCTOU
+window and the atomic index create.
+
+Correctness
+- **An `archive/` index pointer could hide a real orphan.** Files under `archive/`
+  and `templates/` are outside the note graph, but a pointer into them was resolved
+  through a BASENAME map: with both `foo.md` and `archive/foo.md` present, the
+  archive pointer marked the live `foo.md` as indexed, and the doctor reported a
+  clean store while a genuinely unreferenced note sat in it. Such a pointer is now
+  reported as INFO and credited to nothing. It stays INFO because the protocol
+  *requires* the folded-archive index line to remain a pointer (SKILL.md §5). The
+  exclusion is case-folded on BOTH sides (pointer and directory walk): on macOS
+  `realpath` keeps the caller's spelling, so a pointer written `Archive/foo.md`
+  would otherwise have slipped past it and resurrected the same hidden orphan.
+- **The installer deleted user content around a block marker.** Markers were matched
+  as raw substrings, which conflated two very different files. A genuinely duplicated
+  `BEGIN` made the splice run from the FIRST begin to the END, silently dropping
+  every line in between; and a file where the user merely *quotes* the marker in
+  prose ("wrap it in `<!-- BEGIN … -->`") was treated as malformed — skipping the
+  real replacement AND deleting that user line. A marker now counts only as a whole
+  line, which is how the installer writes it.
+- **A dangling `MEMORY.md` symlink was written through.** `exists()` is False for a
+  broken link, so the symlink refusal was skipped and `copy2` created the template
+  at the link's target, outside the store. The check is now unconditional and runs
+  first.
+- **A miscased `[[wikilink]]` was reported as broken.** Index pointers already
+  case-folded when the filesystem said the file existed; wikilinks matched exactly,
+  so on Windows/macOS `[[Foo]]` → `foo.md` was reported as a dangling link *and*
+  `foo.md` as an orphan — a clean store exiting 1. Both paths now resolve the same
+  way, by probing the link's own spelling and letting the filesystem decide.
+  `[[note.MD]]` also no longer becomes `note.MD.md`.
+- **An unquoted frontmatter value lost a trailing quote.** The parser ran
+  `.strip('"').strip("'")` over every value, so `description: he said "hi"` became
+  `he said "hi` — and `created: 2026-01-01"` was quietly repaired into a valid date.
+  Quotes are now stripped only from an actually-quoted value, one pair at a time.
+  A malformed pair (`"foo""`) is reported instead of silently accepted; a
+  backslash-escaped inner quote stays valid, because real stores contain them.
+- **`mailto:` pointers were treated as local paths.** It is the one allowlisted
+  scheme with no `//` authority, so folding it into the `://` alternation dropped
+  it — contradicting the documented allowlist.
+
+Concurrency
+- **The Codex state lock could be taken from a live writer.** It declared a lock
+  stale once its mtime was 30 s old and simply unlinked it — true of a dead owner,
+  but also of one that merely paused on a slow disk, a suspended laptop, or a
+  breakpoint. Both processes then ran the same read/modify/write and the later
+  clobbered the earlier; worse, release unlinked by PATH unconditionally, so the
+  displaced writer deleted the *new* owner's lock on its way out. Exclusion is now
+  a kernel lock on an open descriptor (POSIX `flock` / Windows `msvcrt`), which
+  cannot be taken from a live holder and is released by the OS if that process
+  dies — so crash recovery, the one real problem the stale-takeover solved,
+  still works. The (now empty) lock file is deliberately left on disk.
+
+Hardening
+- **The emitted recovery command could not run.** A session id beginning with `-`
+  was parsed as an option by the receiving `argparse`, so the single command the
+  hook hands out on a blocked manual compaction failed with "expected one
+  argument". It now uses `--session-id=<id>` and `--` before the positional.
+- **`SessionStart.source` is stored as an enum**, not 64 characters of whatever the
+  event carried. It arrives in an untrusted event and `status --json` prints
+  session records straight back into a model's context.
+- **Symlink-escape checks are re-run immediately before each write, delete, and
+  copy**, instead of only in the run's preflight. This narrows the TOCTOU window
+  rather than closing it, and `SECURITY.md` now says so plainly.
+- **`MEMORY.md` is created atomically.** An interrupted `copy2` left a truncated
+  index, which every later run then adopted as "kept existing" — permanent, silent
+  damage.
+- **A failed install now reports what landed.** Nothing is rolled back (several
+  targets are user-owned files), so the run prints the completed steps and names
+  the two that a re-run will NOT repair on its own: a truncated index is kept, and
+  a half-copied skill dir is kept without `--force`.
+
+Tests
+- **CI was running fewer tests than it appeared to.** `tests/test_tools.py` doubles
+  as a dependency-free script, and its `if __name__ == "__main__"` block sat in the
+  MIDDLE of the file — `_main()` collects `test_*` from `globals()` at call time, so
+  the 14 tests defined below that block (including everything added in 0.6.1) were
+  silently skipped in CI while passing locally under pytest. The runner now sits at
+  the end of the file, with a comment saying why it must stay there; the script and
+  pytest paths both collect 108. One new test also had to drop its `monkeypatch` /
+  `capsys` fixtures, which the script runner cannot supply.
+- `tests/test_state_lock.py` is new and wired into the CI matrix: lock semantics
+  differ per platform (POSIX `flock` vs Windows `msvcrt`), so it has to run on all
+  three, and it uses a real second process — the two-writers-at-once failure has no
+  single-process repro.
+- **The test harness dropped stderr.** `_run` returned stdout only, but every
+  installer refusal is a `raise SystemExit`, which prints to stderr — so any test
+  asserting on a refusal was vacuous *exactly where the refusal fired*. Two symlink
+  tests would have started failing the moment the runner fix above let CI reach them
+  on a platform where `os.symlink` succeeds. Both streams are returned now.
+
+Upgrading
+- **Do not run 0.6.3 and 0.6.4 against the same store at the same time.** The two
+  lock schemes cannot see each other: 0.6.3 takes the lock by CREATING the file,
+  0.6.4 by locking an already-open one, so each would happily enter a critical
+  section the other holds. There is no fix that keeps interoperability without
+  reintroducing the displacement bug (0.6.3 unlinks any lock file older than 30 s,
+  including 0.6.4's). `.codex/engramory/engramory_sync.py` is a COPY made at install
+  time, so after upgrading, re-run `engramory_init.py codex --install-hooks --force`
+  to replace it — then re-trust the hooks in Codex's `/hooks`.
+
+Docs
+- `templates/MEMORY.md` reopened the settled `user`/`feedback` split by listing
+  "durable preferences" under `user` without SKILL.md §2's disambiguation — a
+  reply-style preference is `feedback`. The template now carries it.
+- SKILL.md documents the restricted grammar's quoting rule; the doctor docstring,
+  `SECURITY.md`, and the Codex adapter README are updated to match the new lock,
+  `source`, and installer behavior.
+
+## 0.6.3 — 2026-07-26
+
+A documentation-drift sweep after three fast releases: every doc and module
+docstring re-checked against the code it describes. Two items turned out to be
+code bugs rather than wording, and were fixed as such.
+
+Code
+- The doctor truncated every echoed frontmatter fragment **except** an invalid
+  `created`/`updated` value, so a multi-megabyte bad date could still be echoed
+  near-whole. It now goes through the same bounded quoting.
+- The Codex hook fenced the untrusted state diagnostic in `additionalContext` but
+  repeated it **unfenced in `systemMessage`** — fencing one copy and not the other
+  defeats the purpose. Both are fenced now.
+- Removing the `.codex/hooks.json` ignore rule now checks provenance: only a rule
+  carrying this installer's comment marker is removed. A rule the user wrote
+  themselves is left alone (and said so), instead of being silently un-ignored.
+
+Docs corrected to match the code
+- The index guard's docstring still described the pre-0.6.2 behavior it lost
+  ("an unreadable index is treated as empty … a growing write still stays gated"),
+  which is exactly the claim 0.6.2 fixed. `CONTRIBUTING.md` likewise still said the
+  guard "fails open silently" in all cases.
+- The doctor's docstring omitted the non-remote-URL check and the bounded reads,
+  and named a narrower remote-scheme set than `_is_remote_url` accepts.
+- `engramory_check`'s docstring claimed the hook "enforces the cap on every edit";
+  it enforces it for the tools it matches, not for shell/MCP/external writes.
+- `engramory_sync`'s docstring said the cap evicts the oldest unsynced records;
+  it evicts CLEAN records first and only drops unsynced ones when those alone
+  exceed the cap.
+- `PORTING.md` claimed `tools/` are all read-only validators — `init` and `sync`
+  both write.
+- `hooks/INSTALL.md` still gave the unscoped "reuse the host's native memory
+  directory" advice that 0.6.1 scoped everywhere else.
+- The three recall snippets (`rules-snippet`, Kiro steering, reader snippet) never
+  got the root-confinement rule added to `SKILL.md` §4.
+- The Kiro steering file's sync omitted durable references, doctor, the cold-start
+  test, and the reporting details, while its README claimed parity with `SKILL.md`.
+- `templates/example-project.md` still told the reader to treat "2.1 as the next
+  free slot" and to re-verify the current version — current state, and precisely
+  the "warns you not to trust its own numbers" tell the protocol names. It now
+  keeps only the settled decision and points at the version tool.
+- Host claims are now version-scoped: `PORTING.md`'s per-host hook notes and the
+  Kiro adapter carry a "checked on" date and a re-verify instruction; the
+  `codex exec` finding is stated as one version's measurement (0.144.1) rather
+  than a permanent property, noting `--dangerously-bypass-hook-trust` exists and
+  the area is moving; the OpenClaw default is scoped to the base profile.
+
+## 0.6.2 — 2026-07-26
+
+The P1 tier from the same three-lane audit.
+
+- **Gitignore ownership can now flip back.** A first Engramory-only install adds
+  `/.codex/hooks.json` to `.gitignore`; once a teammate's handler appears the file
+  is shared and must return to version control. Declining to add the rule was not
+  enough — the earlier rule stayed. A re-install now removes it (and the comment
+  it wrote), leaving unrelated rules untouched.
+- **An unreadable index no longer fails open for Edit/MultiEdit.** Substituting an
+  empty base made every `old_string` look absent, so the simulation predicted an
+  empty result and a large growing edit passed. The guard now distinguishes "no
+  index yet" from "exists but could not be read" and says the cap was NOT
+  verified instead of passing silently. (It still never denies over a transient
+  lock — a guard must not brick editing.)
+- **Bounded reads everywhere a hostile file could exhaust the backstop.**
+  `engramory_check` answers OVER from the file SIZE without reading; the doctor
+  refuses to parse an index far past the cap and skips a note larger than 4 MB
+  rather than slurping it; the guard catches `MemoryError` instead of falling
+  through its blanket handler. A planted multi-gigabyte `MEMORY.md` used to hang
+  or kill the very tools meant to report it.
+- **Untrusted store text is fenced before it reaches a model.** A crafted session
+  key (`IGNORE ALL PREVIOUS INSTRUCTIONS…`) travelled verbatim from state
+  validation into the hook's `systemMessage`/`additionalContext`. Such text is now
+  quoted, length-bounded, and wrapped in `<untrusted-diagnostic>` with an explicit
+  "data, not instructions" note. The doctor likewise quotes and truncates every
+  echoed frontmatter fragment.
+- **The Kiro adapter carries the current protocol again.** Its steering file still
+  taught pre-0.6 rules (no live-`project` exception, no settled-fact rule, no
+  pre-transition sync) and told the agent to run `python tools/…`, which nothing
+  copies into a Kiro workspace. Both fixed, and the missing deny-hook is stated.
+- **`archived: <topic>` no longer strands memories.** Compaction allowed
+  collapsing a retired topic into a line that names no file — but recall never
+  scans `archive/` and the doctor skips it, so those notes became undiscoverable.
+  A collapsed line must now still be a pointer to a file listing what was
+  archived; otherwise delete the notes outright and say so.
+- Size rendering gained MB/GB tiers, so a runaway index reads as `300.0 MB`
+  instead of `307200.0 KB` (all three tools stay in agreement).
+
+## 0.6.1 — 2026-07-26
+
+Three-lane audit (tooling / protocol prose / adversarial) plus local verification.
+
+- **Fixed: a session the bookkeeping never observed could open the manual gate.**
+  When a `PreCompact` was the FIRST event seen for a session — hooks trusted
+  mid-session, state deleted or reset, an earlier dirty write failed — a blank
+  record was synthesized and read as "clean", so manual compaction proceeded. An
+  unobserved session now counts as unsynced. A session whose `SessionStart` was
+  recorded and that submitted no prompt is still genuinely clean and still passes.
+- **Fixed: the volatile-value rule contradicted the spec's own examples.** 0.6.0
+  banned "version numbers / test results" outright, while `SKILL.md`'s example,
+  the index example, and `templates/example-project.md` all teach release-2.0
+  state. The line is now drawn where it belongs — **settled fact vs. current
+  state**: "2.0 shipped on 2026-01-15" is fine (the event cannot be falsified by
+  time); the version you are on now, the tip commit, and the current test count
+  are not, and the note records where to read them.
+- **Fixed: installer writes could truncate user-owned files.** `AGENTS.md`, a
+  dedicated rules file, and `.gitignore` were written with a truncating
+  `open(..., "w")`, so a disk-full/I/O error/kill in between left the user's file
+  empty or half-written. All install writes now stage and `os.replace`.
+- **Fixed: three holes in read-side store confinement.** `init` adopted an
+  existing `MEMORY.md` on `exists()` alone, so a symlinked index was "kept" and
+  every later recall read the target; doctor skipped any pointer containing
+  `://`, making `file:///…/x.md` an "external URL" that reported clean; and the
+  recall protocol never told the agent to confine pointers to `<MEMORY_ROOT>`.
+  All three are closed — a non-remote scheme is now an issue, genuine
+  `http(s)` links still pass, and §4 states the containment rule.
+- **Fixed: "use the host's memory directory" was over-generalized.** It is right
+  for a host whose memory is plain files you control (Claude Code) and wrong for
+  one that manages its own (Codex Memories, OpenClaw, Hermes) — where it invites
+  exactly the two-writer conflict `PORTING.md` warns about. `SKILL.md` §0/§7 and
+  both READMEs now scope it.
+
+## 0.6.0 — 2026-07-26
+
+Protocol/docs
+- **One canonical store for memory and task continuity.** Engramory does not add
+  a `handoff` type or parallel handoff folder. A live `project` note may carry an
+  unfinished task's goal, status, decisions, constraints, blockers, and next
+  step; `feedback` remains limited to corrections/workflows reusable across
+  tasks.
+- **Unified continuity sync before deliberate compact/clear/new-thread
+  transitions.** The documented pass is scan → dedup/update → project → reusable
+  feedback → durable references → retire stale/completed transient state →
+  check+doctor → cold-start sufficiency.
+- **The anti-drift negative scope stays hard.** Continuity does NOT loosen the
+  rule that memory never restates code/git. A `project` note may keep only
+  *stable* pointers (branch name, issue/PR number, file path), always re-verified
+  on recall; *volatile* values (commit hashes, version numbers, test results,
+  timings) are never stored — the note records where to read them instead.
+- **Write reporting is explicit.** After a memory write/sync, the agent reports
+  added, updated, archived, and skipped items (with reasons; deletions are named
+  under archived), plus index line/byte size and the check result.
+- **Codex lifecycle-hook contract documented without overstating automation.**
+  `SessionStart` may remind recall, `UserPromptSubmit` may mark dirty, and a
+  manual `PreCompact` may gate for explicit sync. Automatic compaction must fail
+  open with a warning/`needs_reconcile` to avoid a deadlock. Hooks assist timing;
+  they do not classify notes or generate a guaranteed semantic summary.
+  Project-scoped hooks must be reviewed/trusted and verified with `/hooks`.
+  The optional installer path is `--install-hooks --mode explicit|assisted`;
+  assisted adds proactive milestone reminders but still requires the agent-run
+  semantic sync and explicit `mark-synced`.
+
+Codex adapter
+- **Optional lifecycle runtime shipped.**
+  `hooks/codex/engramory_codex_hook.py` implements bounded `SessionStart`
+  navigation, prompt-free dirty bookkeeping on `UserPromptSubmit`, and a
+  `PreCompact` gate that blocks only a known manual trigger. Automatic, missing,
+  and future/unknown triggers fail open visibly and retain `needs_reconcile`.
+- **Auditable sync acknowledgement shipped.** `tools/engramory_sync.py` keeps
+  bounded per-session bookkeeping in `.engramory-codex-state.json`.
+  `mark-synced` is idempotent, checks the index path and hard caps, and never
+  generates or edits semantic memory.
+- **Installer support.** `engramory_init.py codex` now accepts
+  `--install-hooks` and `--mode explicit|assisted`, conservatively merges
+  unrelated `.codex/hooks.json` handlers, installs managed scripts under
+  `.codex/engramory/`, preserves existing memory stores, and tells the user to
+  inspect/trust the project hooks with `/hooks`.
+- **Fixed: the session cap could strand the current session.** Once every slot
+  held unsynced work, bookkeeping raised instead of pruning, so an arriving
+  session was never recorded. The hook then blocked manual compaction while
+  naming that unrecorded id, and the `mark-synced` command it printed could only
+  answer `unknown session id` — the emitted recovery was impossible to follow.
+  The cap now evicts the OLDEST unsynced records, keeps the current session, and
+  carries a `dropped_unsynced_sessions` count (surfaced by `status`) so dropped
+  unsynced work is never silently forgotten.
+- **Fixed: an unprovable state record could open the manual gate.** A session
+  record with a missing/non-boolean `dirty`, or generations contradicting a clean
+  flag (`synced_generation` behind `dirty_generation`), was read as clean and let
+  a manual compaction through. Such a record is now treated as unsynced —
+  fail-closed — while an honest, self-consistent clean record still passes.
+- **Fixed: unreadable state produced a dead-end instruction.** When state or the
+  sync runtime cannot be loaded, the blocked-compaction message now points at
+  `status` (which lists real session ids) or at the broken runtime path, instead
+  of a `mark-synced` command that cannot resolve.
+- **Honest limits documented, not papered over.** Two structural limits are now
+  stated in `adapters/codex/README.md` instead of being discovered in use:
+  installing a project hook does **not** enable it (Codex disables project hooks
+  until the project is trusted, and the per-handler trust is content-hashed, so
+  re-running the installer invalidates it); and non-interactive `codex exec` does
+  **not** fire these lifecycle hooks — measured on 0.144.1 with a valid,
+  successfully-parsed config. The per-prompt cost (~1.2–1.4 s, synchronous
+  because Codex has no async hooks) is documented too, along with why the
+  PowerShell `-EncodedCommand` layer must not be "optimised" away: `cmd.exe /C`
+  strips the outer quotes of a command line beginning with a quote, and a
+  space-bearing interpreter path must be quoted.
+- **Machine-local config is treated as such.** Codex 0.144.1 has no project-dir
+  variable for hook commands, so every generated path is absolute and
+  unshareable. The installer now gitignores `.codex/hooks.json` when Engramory is
+  its only owner — and deliberately does not when the file also carries someone
+  else's handler, since that file is a normal shared Codex surface. New
+  `--hook-python` picks the interpreter that gets baked in; the default is
+  whatever Python ran the installer, which silently breaks every hook if it was a
+  throwaway virtualenv. The install summary now names the interpreter and states
+  that the hooks are inactive until trusted.
+- **P0 regression coverage.** Script-level black-box and installer tests cover
+  fresh-session navigation, dirty manual compact → sync → retry, fail-open
+  auto/unknown compaction, prompt non-persistence, idempotent acknowledgement,
+  hard-cap/symlink validation, mode guidance, hook failure visibility,
+  conservative install and upgrade behavior, generated Windows launch commands,
+  and the continuity protocol contract. Real-host discovery and trust remain a
+  `/hooks` verification step.
+
+## 0.5.1 — 2026-07-24
+
+Hardening + honesty pass from a two-model deep audit (Claude × Codex at max reasoning
+effort), verdicts grounded in the current Claude Code hooks schema/docs and a live-hook
+experiment — on Claude Code 2.1.218 a user-settings `PreToolUse` hook fired for a
+*subagent's* over-cap `Write` too (both the main loop's and the subagent's writes were
+denied), so "subagent edits bypass the guard" did not reproduce there. No behavior
+changes for a correctly-installed hook; the code fixes are init/validator hardening.
+
+Fixed
+- **init refuses a `--memory-root` overlapping the skill install dir.**
+  `--memory-root .agents/skills/engramory --install-skill --force` would `rmtree`
+  the very directory holding the memory store (data loss); either direction of
+  containment is now refused up front. Without `--install-skill` nothing touches
+  the skill dir, so that layout stays allowed.
+- **init refuses writing through a symlink that escapes `--project-root`** —
+  `AGENTS.md` / `.gitignore` / a dedicated rule file / the skill dir that *resolves*
+  outside the project root would rewrite an unrelated external file (the same
+  boundary doctor enforces on the store). All written paths are preflighted
+  **before any side effect**, so a refusal never leaves a partial init behind
+  (the preflight ordering itself was caught by the codex re-review of the first
+  version of this fix). A deliberate out-of-tree layout should point
+  `--project-root` at the real location.
+- **doctor reports duplicate frontmatter keys as an ISSUE.** Last-value-wins let a
+  second `type:` silently reclassify a feedback note as `reference` and dodge the
+  Why/How requirement. Zero false positives on a real 142-note Claude Code store
+  (top-level and `metadata:`-nested keys are disjoint there).
+- **check renders custom byte caps correctly.** `ENGRAMORY_HARD_BYTES=1000` printed
+  a contradictory `cap … / 0 KB` (integer division); now uses the shared `_kb`
+  formatter (exit codes were always right).
+
+Docs
+- **Absolute claims scoped to what the hook actually gates.** "the index never
+  enters an over-cap state" (README en/zh, this changelog's unreleased note),
+  "the *deterministic backstop* the model cannot skip" (hooks/INSTALL.md) and
+  "runs on every edit — deterministic" (PORTING.md) contradicted the repo's own
+  §8 disclosure; all now read "for the matched edit tools (`Edit|Write|MultiEdit`)"
+  with a pointer to SKILL.md §8.
+- **Bypass disclosure names today's real channels**: shell tools are Bash,
+  PowerShell and a background Monitor command (README en/zh, SKILL.md §8,
+  SECURITY.md) — not just a "Bash redirect".
+- **Install-time fail-open warning + self-test** (hooks/INSTALL.md +
+  settings.snippet.json): if the configured interpreter cannot be spawned
+  (`python3` on stock Windows), Claude Code treats it as a *non-blocking* hook
+  error and the edit proceeds — the guard silently never fires. Added a quick
+  post-install check: a 250-line `Write` to a scratch `MEMORY.md` must be denied.
+- README (en/zh), bounded-index section (was Unreleased): Claude Code's native
+  follow-ups — v2.1.186 (2026-06-22) nudges the agent to compact a near-cap index,
+  v2.1.210 (2026-07-14) makes an over-cap write an explicit error instead of a
+  silent truncation. Both fire *after* the write lands; the hook's niche stays the
+  *pre-write* deny, for the matched edit tools.
+
+Verified
+- +5 tests (89 tool + 29 hook = 118), green; doctor re-run clean (structure) on a
+  real 142-note store with zero new dup-key false positives.
+
+## 0.5.0 — 2026-07-04
+
+Generalize the read-only reader (0.4.0's `codex-reader`) to **any host** — one writer, N
+readers. Additive and backward-compatible: `codex-reader` keeps working unchanged; the write
+hosts, `rules-snippet.md`, the tools, and the Claude Code hook are untouched.
+
+Added
+- **Reader host family `<host>-reader`** in `engramory_init.py`: `codex-reader`, `claude-reader`,
+  `openclaw-reader`, `hermes-reader`, `cline-reader`, `windsurf-reader`, `cursor-reader`,
+  `kiro-reader`. Each wires that host to RECALL (read-only) from a store another agent owns and
+  writes, landing the recall block in **that host's own always-loaded rules file** — a marked
+  block in a shared file (`AGENTS.md` / `CLAUDE.md` / `.clinerules` / `.windsurfrules`), or a
+  dedicated rule file with the required frontmatter (Cursor `.mdc` `alwaysApply: true`, Kiro
+  steering `inclusion: always`). All keep the 0.4.0 read-only guarantees (no store, no write
+  tools, refuses `--install-skill` and an in-store `--project-root`).
+- **Honesty flag.** Only `codex-reader` is dogfooded end-to-end here; the others are wired from
+  each host's *documented* rules-file format and the tool prints an "unverified — confirm your
+  host loads it" note on init (and the adapter README table marks which is tested).
+
+Changed
+- `adapters/codex-reader/` → **`adapters/reader/`** (`README.md` + host-neutral
+  `reader-snippet.md`), covering the whole family; README/INSTALL links updated. The
+  `codex-reader` marker and behavior are unchanged.
+
+Hardened (from a codex + multi-agent review)
+- The read-only "don't touch the store" guard now checks the actual **target rules file**, not
+  just `--project-root` — so a nested rules file (e.g. Cursor `.cursor/rules/*.mdc`) can't land
+  inside a store like `<root>/.cursor`.
+- A freshly created marker-mode rules file is titled with its own name (`# CLAUDE.md`), not a
+  hardcoded `# AGENTS.md`.
+- Cline/Windsurf use the single-file form (`.clinerules` / `.windsurfrules`, still read by
+  current versions); the adapter README notes the newer rules-directory alternative.
+- `engramory_init` is now ascii/OEM-console crash-safe (reconfigures stdout like the doctor/check
+  tools) and its `--help` is ASCII-only — a Unicode ellipsis had made `--help` raise
+  `UnicodeEncodeError` on a strict ascii console (caught by a final codex re-review of the fixes).
+
+Verified
+- All four injection shapes smoke-tested (AGENTS.md / CLAUDE.md marker; Cursor `.mdc` + Kiro
+  steering frontmatter). +9 tests (84 tool + 29 hook). Green on Windows + a real Mac (py3.9).
+
+## 0.4.0 — 2026-07-04
+
+New **read-only Codex reader** adapter — additive and backward-compatible; the existing
+adapters (codex, openclaw, kiro) and the Claude Code hook/skill deployment are untouched.
+
+Added
+- **`codex-reader` host in `engramory_init.py`.** Wires Codex to *recall* from a store that
+  another agent (typically Claude Code's native auto-memory) **owns and writes** — for the
+  pattern where Claude Code is the curator and you delegate a task/sub-agent run to Codex and
+  want it grounded in the same memory. It is **read-only**: creates no store, touches no
+  `.gitignore`, installs no write tools, and uses a recall-only snippet (no write protocol).
+  `--memory-root` MUST point at an existing store (it refuses otherwise — it never creates
+  one). Its `AGENTS.md` marker is distinct, so it coexists with a write `codex` block. The
+  read-only guarantee is enforced up front: it refuses `--install-skill` (which would copy the
+  write tools) and refuses a `--project-root` inside the store (which would write into it).
+- **`adapters/codex-reader/`** — `README.md` (why read-only = the single-writer invariant,
+  data-egress caveat, setup) + `recall-snippet.md` (the read-only recall rules: read the index,
+  open only relevant notes, verify before acting, **never write** — surface durable facts to
+  the user instead).
+
+Verified
+- End-to-end: a Codex run wired only with the reader block read `MEMORY.md`, opened the one
+  relevant note, and returned the fact — under `codex exec -s read-only` (physically no write).
+- +6 tests (read-only points at an existing store / refuses a missing one with no partial write
+  / coexists with the write `codex` block / no write tooling in the block / refuses
+  `--install-skill` / refuses `--project-root` inside the store). 75 tool + 29 hook tests pass.
+
+Unchanged
+- The write `codex`/`openclaw`/`kiro` adapters, `rules-snippet.md`, the doctor/check tools,
+  and the Claude Code `PreToolUse` hook are all byte-for-byte unchanged; new behavior is gated
+  behind per-host config that defaults to the existing path.
+
+## 0.3.3 — 2026-07-04
+
+Correctness, portability, and a security-boundary fix surfaced by a cross-model
+(GPT-5.5 codex) review. Backward-compatible; the doctor now reports two additional
+defect classes (escaping symlink notes, case-only slug collisions).
+
+Security
+- **doctor no longer follows a symlink out of the store root.** A *note* file that
+  resolves (via symlink) outside `MEMORY_ROOT` is flagged and skipped, not read (new
+  `escaped-note` triage bucket); a `MEMORY.md` *index* that is itself an escaping symlink
+  is refused before it is read. Both close a path where a planted symlink could make
+  doctor open an arbitrary file and echo a fragment of it (a malformed-frontmatter line,
+  or a `.md`-looking link target) into its report. This mirrors the escape check already
+  enforced on index pointers; the store is attacker-influenceable input (SECURITY.md).
+  The containment test was also hardened (correct at a drive / filesystem root) and shared
+  across notes, index, and pointers. Regression tests run on Linux/macOS CI (symlink-
+  privilege gated on Windows).
+
+Fixed
+- **Hook install snippet uses the exec form.** `hooks/settings.snippet.json` now sets
+  `"command": "python3"` + `"args": [<abs path>]` (no shell), so the script path is passed
+  literally (no backslash/quoting pitfalls) and `python3` — the interpreter that actually
+  exists on most macOS/Linux — is the default. The old shell-form `python "..."` snippet
+  could fail *silently* where a bare `python` is absent (common on macOS). `hooks/INSTALL.md`
+  and the hook's own wire-up docstring updated to match.
+- **doctor duplicate-slug check is case-insensitive.** `foo.md` and `FOO.md` (which coexist
+  on a case-sensitive FS but collide on macOS/Windows) are now reported as a portability
+  defect, not silently accepted.
+- **doctor resolves wikilink aliases and anchors.** `[[slug|Alias]]` and `[[slug#Heading]]`
+  now resolve on the slug (no more false "no target file" info); a path-carrying
+  `[[dir/slug]]` is reported as unresolvable rather than basename-collapsed (which could
+  wrongly rescue an unrelated same-named note from orphan status).
+- **Hook docstring matches behavior.** Clarified that a non-UTF-8 index is decoded lossily
+  (sized by raw bytes) while only an *unreadable* index is treated as empty — both still
+  gate a growing write.
+- **doctor no longer reports a false orphan for a miscased index pointer on macOS.**
+  `os.path.realpath` canonicalises filename case only on *Windows*, not macOS, so a
+  miscased-but-existing pointer kept its miscased basename, missed the real note, and was
+  reported as an orphan. doctor now case-folds a resolved, existing pointer back to the
+  real note key (verified on a real Mac; caught by the new macOS CI job — exactly the
+  class of bug it was added to find).
+
+Changed
+- **CI matrix adds macOS.** `macos-latest` joins the os matrix (the project has
+  `python`-name, path, and symlink platform-sensitive points, and many users are on macOS).
+- **rules-snippet notes the 150-line / 20 KB soft warning** (not just the 200 / 25 KB hard
+  cap) and that a native auto-memory host (Claude Code) already loads `MEMORY.md`, so
+  re-reading it at task start is redundant there.
+
+## 0.3.2 — 2026-06-24
+
+Third host adapter (Kiro) — docs-only, backward-compatible. Motivated by a real report
+of Engramory overflowing the context window on Kiro: the cause is Kiro's default
+`inclusion: always` on steering files, so notes dropped into `.kiro/steering/` load into
+every request.
+
+Added
+- **Kiro adapter (`adapters/kiro/`).** A `README.md` plus a ready-to-copy
+  `steering-engramory.md` template (`inclusion: always`) that carries the discipline and
+  injects the live index via `#[[file:.engramory-memory/MEMORY.md]]` — the Kiro-native
+  equivalent of Claude Code auto-loading `MEMORY.md`. Notes live in a **non-steering**
+  `.engramory-memory/` folder, opened on demand.
+- **Context-overflow footgun documented.** README (EN + zh), PORTING.md, and the adapter
+  README all warn: do **not** put detail notes in `.kiro/steering/` (default
+  `inclusion: always` → every note in every request → overflow); only the index belongs
+  in always-loaded steering. `.gitignore` the store, commit the steering pointer, and do
+  not add the store to `.kiroignore`.
+- **PORTING.md** gains a Kiro row in the host table and a Kiro rung-1 entry: a CLI
+  `PreToolUse` hook with `matcher: fs_write` + `exit 2` is the same shape as the Claude
+  Code guard, so a deterministic cap is possible — but the IDE may pass empty `toolArgs`
+  (issue #7375, CLI-only deny) and the CLI hook is reported broken on Windows 11 (issue
+  #8264). No shim is shipped/tested yet, so the Kiro cap is rules + `engramory_check.py`
+  (best-effort), per Engramory's honesty rule.
+
+## 0.3.1 — 2026-06-20
+
+Docs patch — corrected and sharpened the Hermes (Nous) porting facts after verifying
+against Hermes's own docs/source. Docs-only, backward-compatible.
+
+Changed
+- **Hermes always-loaded rules channel is `AGENTS.md` / `.hermes.md`, not `SOUL.md`.**
+  `SOUL.md` is real and always-loaded, but it is Hermes's *identity/persona* slot
+  (#1 in the system prompt), reserved for tone — standing operational rules belong in
+  the project context files (`AGENTS.md` is Hermes's own recommended place, which also
+  matches the Codex/OpenClaw adapters).
+- **Don't take over Hermes's native memory.** Its `memory` tool writes a frozen-snapshot
+  `MEMORY.md` + `USER.md` that are **already hard-capped in code** (2,200 / 1,375 chars
+  ≈ 1,300 tokens) with error back-pressure + exact-duplicate rejection — so Engramory's
+  index cap is redundant there and its atomic-files-plus-index recall model doesn't fit a
+  single always-injected file. Run Engramory as a **separate plain-file store** (like the
+  Codex adapter) instead; its value-add on Hermes is the ontology + Why/How + negative-scope,
+  which the native store lacks.
+- **Hook scope + caveat.** The `pre_tool_call` matcher `write_file|patch` guards an
+  Engramory *separate-store* index (the agent's file writes); it does not — and need not —
+  intercept the code-capped native `memory` tool. Noted the reported `pre_tool_call`
+  non-firing bug in some worker/dispatch contexts (issue #25204): verify before relying.
+
+## 0.3.0 — 2026-06-15
+
+Second host adapter (OpenClaw) + accurate cross-host porting facts. Minor bump,
+backward-compatible.
+
+Added
+- **OpenClaw init adapter.** `tools/engramory_init.py openclaw` bootstraps an OpenClaw
+  workspace (default `~/.openclaw/workspace`): a marked block in `AGENTS.md` (loaded
+  every session), the protocol under `.agents/skills/engramory` (OpenClaw auto-discovers
+  it), and a separate `.engramory-memory/` store. The `init` tool now takes a host
+  argument (`codex` | `openclaw`) over a shared, idempotent core; the two adapters use
+  distinct markers and coexist in one `AGENTS.md`.
+- **OpenClaw adapter docs** — `adapters/openclaw/README.md`. Honest reliability model:
+  the index cap is rules + `engramory_check.py`. OpenClaw's deterministic deny path is a
+  `before_tool_call` *plugin* (TypeScript), **not** Engramory's Python shell hook, so the
+  guard does not drop in — a hard cap there means writing that plugin (not shipped here).
+
+Changed (docs)
+- **PORTING.md** host table corrected and extended (Cursor → `alwaysApply` + auto
+  `.agents/skills`; added OpenClaw and Trae). The cap degradation ladder now lists the
+  real, non-interchangeable per-host deny mechanisms — Hermes `pre_tool_call`, Cursor
+  `preToolUse` (new/flaky), OpenClaw `before_tool_call` plugin, Trae none — each
+  cross-checked against the host's 2026 docs. Only the Claude Code hook is tested here.
+
+Tests
+- +2 (91 total): OpenClaw bootstrap, and Codex + OpenClaw coexisting with distinct
+  markers (re-running either leaves the other intact).
+
+## 0.2.0 — 2026-06-15
+
+First host adapter beyond Claude Code. Minor bump: new functionality, fully
+backward-compatible (existing Claude Code setups are untouched).
+
+Added
+- **Codex init adapter.** `tools/engramory_init.py codex` bootstraps a Codex project:
+  creates a conservative memory store, adds a marked Engramory block to `AGENTS.md`,
+  optionally installs the full protocol under `.agents/skills/engramory` (Codex
+  auto-discovers Agent Skills there), and adds a `.gitignore` entry when the store
+  lives inside the project. Re-running is idempotent.
+- **Codex adapter docs.** `adapters/codex/README.md` documents the recommended
+  `AGENTS.md + .agents/skills + separate plain memory folder` wiring, and is explicit
+  that the index cap on Codex is rules + `engramory_check.py`, **not** a deterministic
+  deny hook (the `PreToolUse` hook is Claude-Code-only).
+
+Hardened (init)
+- `AGENTS.md` block editing tolerates malformed markers from a hand-edit: a reversed
+  (`END` before `BEGIN`) or dangling single marker no longer crashes, and never
+  deletes the surrounding user content (stray marker lines are dropped, a fresh block
+  appended).
+- Fails fast with a clear message if the source tree is incomplete (instead of a raw
+  `FileNotFoundError` mid-copy); `--force` help now states it recreates the whole
+  `.agents/skills/engramory` directory.
+
+Tests
+- Init coverage for Codex bootstrap, idempotence, external/kept memory roots, the
+  malformed-marker no-data-loss guarantee, and `--force` replace-vs-keep (+5; 89 total).
+
+## 0.1.13 — 2026-06-15
+
+Pre-public-release hardening (the repo goes public at this version). A multi-agent
+pre-publish audit — adversarially verified, every finding reproduced — turned up one
+red-CI blocker and two real robustness gaps. All fixed; no change to the protocol or
+to what the doctor/hook consider valid.
+
+Fixed (CI / tests)
+- **Green CI on Linux.** `test_doctor_miscased_pointer_is_not_false_orphan` baked in a
+  case-insensitive-filesystem assumption and failed on case-sensitive Linux — yet the
+  tool was *correct*: a miscased pointer to a path that doesn't exist there is a
+  genuine "missing file" + a genuine (not false) orphan. The test is now
+  filesystem-aware (probes case-folding, asserts "clean" on Win/mac and "missing file"
+  on Linux), so CI is green on every OS in the matrix.
+
+Fixed (tools)
+- **CLI tools no longer crash on a strict ascii / OEM console.** `engramory_doctor`
+  and `engramory_check` print an em-dash / `§` in their normal verdict text, which a
+  Windows cp437/cp850 console or a POSIX `C`/ascii locale cannot encode — it raised
+  `UnicodeEncodeError` instead of printing the report. Both now reconfigure stdout to
+  `backslashreplace`, so the report always prints. (The hook was never affected — it
+  emits ascii-safe JSON.)
+- **`-h` / `--help`** on both tools now prints usage and exits 0 (previously `--help`
+  ran a scan of `.` on the doctor, or read as an unreadable path on check).
+
+Changed (docs)
+- **README.md** install step now matches README.zh-CN word-for-word in intent: only
+  the Claude Code cap adapter is written and tested; on every other host you write and
+  verify the thin I/O shim yourself.
+
+Tests: +4 (84 total).
+
+## 0.1.12 — 2026-06-14
+
+A self-directed multi-agent deep audit (then adversarially verified, each finding
+reproduced on a real sample). ~21 raw findings deduped to ~8 distinct, cross-platform
+robustness ones; two suggestions were declined as over-engineering (see end).
+
+Fixed (doctor)
+- **UTF-8 BOM** no longer makes a valid note read as "no frontmatter block" — notes
+  decode with `utf-8-sig` (Windows editors / PowerShell write a BOM by default).
+- **No more false "orphan" on case-insensitive filesystems (Windows/macOS).** A
+  pointer whose case differs from the file (`feedback_git_workflow.md` → file
+  `feedback_Git_Workflow.md`) resolved via `os.path.isfile` but was keyed by the
+  pointer's text, so the real note was reported as an orphan (exit 1). The graph now
+  keys on the realpath-resolved name (which canonicalises case), matching the file.
+- **A self-link no longer rescues a real orphan.** A note that only contains
+  `[[itself]]` and isn't in the index is once again flagged (the wikilink graph
+  excludes self-references).
+- **`.MD` / `.Md` extensions are discovered and schema-checked** (was case-sensitive
+  `.md`, so an uppercase-extension note silently bypassed type/date/Why-How validation
+  while its pointer still resolved on a case-insensitive FS).
+- **Pointer regex tightened:** `note.md.bak` / `note.md.tmp` are no longer truncated
+  to `note.md` (false credit + misleading "missing file" text); control characters
+  (incl. NUL) are excluded so a malformed pointer can't reach `realpath` and throw;
+  backslash pointers are normalised so they resolve the same on Windows and Linux.
+- **Byte sizes render via the shared `_kb()`** like check/hook — a sub-1 KB index
+  shows "N B" not "0 KB", and an over-by-1-byte cap no longer prints "25 KB > 25 KB".
+
+Fixed (hook)
+- **The deny reason names only the dimension that actually grew.** Compacting line
+  count while bytes rise (both over cap) no longer tells you to cut a line count that
+  is shrinking.
+
+Changed (docs)
+- **README.md** mirrors the zh-CN "adopting an existing store" pointer in the install
+  section (CONTRIBUTING asks both READMEs stay in sync).
+- **INSTALL.md / README.zh-CN** align the Codex/Windsurf hook-maturity wording to the
+  flat "coverage varies, only Claude Code is tested" phrasing already in the EN README.
+
+Declined (out of scope for a single-writer, personal-scale, zero-dependency tool)
+- O(n²) regex time on an *unbounded, malicious* note body (you'd have to put a 100 KB
+  unclosed-bracket file in your own store; atomic groups aren't available pre-3.11).
+- Why/How written *inside a code fence* counting as reflection (contrived; a Markdown
+  code-block stripper adds more risk than the non-scenario removes).
+
++7 tests (80 total). Zero-dependency; no exit-code or judgment-logic change.
+
+## 0.1.11 — 2026-06-14
+
+A third-opinion audit (Codex) on 0.1.10. Findings verified on samples first; one
+suggestion (enforce fixed four-type index sections) was declined — a thematic index
+layout is a deliberately allowed shape, and enforcing sections would fail valid stores.
+
+Fixed
+- **The default install now produces compliant memories.** `rules-snippet.md` (the
+  always-loaded primary path) taught name/description/type but not `created`/`updated`
+  or Why/How, so an agent following only the default rules could write notes the doctor
+  then flags. The snippet now states the full write-contract (frontmatter dates + a
+  `Why:` / `How to apply:` line on feedback/project notes).
+- **The hook no longer blocks a real compaction.** It treated *either* dimension
+  growing as growth, so cutting line count while bytes ticked up (still under the byte
+  cap) was wrongly DENIED. It now denies only when the dimension that is over its OWN
+  cap grows — honouring the documented promise that shrinking/compaction edits pass.
+
+Added
+- **doctor flags duplicate index pointers** (the same note pointed to from more than
+  one line) as INFO — redundant but non-failing (a thematic index may cross-reference
+  on purpose).
+
+Changed (docs honesty)
+- **SKILL §1** stops calling the frontmatter "YAML": it's a restricted `key: value`
+  subset (no multi-line values / lists), parsed by a zero-dependency reader.
+- **README.zh-CN** the "Claude Code uses the same four types" claim now carries the
+  same qualifier as the English (per anthropics/claude-code#58840; the public docs
+  don't expose the type ontology).
+
++2 tests (73 total). Zero-dependency; no exit-code or judgment-logic change.
+
+## 0.1.10 — 2026-06-14
+
+A second-opinion audit (Codex) on the 0.1.9 release. Every finding was reproduced on
+a real sample first; the fixes are correctness + doc-honesty, with no widening of what
+the validator accepts.
+
+Fixed
+- **doctor scans only the note BODY for `Why:` / `How to apply:`** — a label sitting
+  in the frontmatter no longer satisfies the reflection requirement.
+- **doctor requires an exact `---` fence line** — `----` / `---x` is no longer
+  mistaken for a frontmatter fence (a Markdown horizontal rule can't silently close
+  it); CRLF endings are tolerated.
+- **doctor escape check uses `realpath`** — a symlinked index pointer can no longer
+  resolve outside the store root while passing the check.
+- **check.py docstring** said WARN fires at `>= soft`; the code fires at `> soft`.
+  Corrected.
+
+Changed (docs honesty)
+- **Cross-host cap claims tightened** (PORTING / SKILL §9): the deterministic cap is
+  shipped and *tested only on Claude Code*; other hosts expose the hook API so it is
+  portable, but you write and verify that shim yourself — not "already works on
+  Cursor / Cline".
+- **README.zh-CN synced to the English:** the differentiator no longer implies
+  procedural memory is novel (it is prior art — the contribution is the bundle +
+  discipline); the comparison table's basic-memory / mem0 cells match the English;
+  and the missing **Known limitations** section was added.
+- **INSTALL.md** no longer says memories "hold secrets" — they hold machine-local
+  *locators*; a secret's *value* never belongs in memory (SKILL §5).
+
++4 tests (71 total). Zero-dependency; no exit-code or judgment-logic change.
+
+## 0.1.9 — 2026-06-14
+
+From a real first-adoption: migrating a 118-note Claude Code store to strict format
+surfaced false-positives and triage gaps — none of the strictness was wrong, the
+*reporting* was.
+
+Fixed
+- **doctor Why/How check accepts a full-width colon `：`** (CJK keyboards emit it)
+  and a line-start Markdown prefix (`#`/`>`/`*`), and is now line-anchored so an
+  incidental `Why:` in prose no longer counts. The full `How to apply:` label and an
+  explicit colon are still required — a bare `## How` or short `How:` stays an ISSUE
+  (the "to apply" cue is deliberate), but now prints a fix hint naming the variant.
+- **doctor tolerates a host type-prefix in the name↔filename check** (Claude Code's
+  `name: audit-methodology` vs file `feedback_audit_methodology.md`) — no more INFO
+  noise on host-native stores.
+
+Added
+- **doctor groups its issues** into a bucketed summary (`N missing-date,
+  N missing-why-how, N broken-pointer, …`) with a one-line manual fix per bucket, so
+  a big existing store reads as a triage list, not a flat wall.
+- **`Adopting an existing store` guide** (PORTING.md): `--no-schema` to triage
+  structure first, a copy-paste stdlib snippet to backfill missing `created:`/
+  `updated:` from mtime (dry-run, honestly captioned), then write Why/How by hand.
+
+Changed
+- **check / doctor / hook now name the breached dimension** (lines vs bytes) in the
+  WARN / over-cap / over-shrink messages — matching the DENY path, which already did
+  — plus a one-line "compact this dimension first" hint. (You could over-compress one
+  axis without realising the other tripped.)
+- **SKILL §2:** documents the canonical Why/How label form, and that a pure-status
+  snapshot is negative scope (fold in or demote to `reference`), not a `project` note
+  to force-fit with ceremonial Why/How.
+
+All changes are zero-dependency, with no exit-code or judgment-logic change. +11
+tests (67 total).
+
+## 0.1.8 — 2026-06-14
+
+Added
+- **doctor `--no-schema` flag:** run only the structural checks (over-cap index,
+  broken pointers, orphans, duplicate slugs) and skip the per-note frontmatter /
+  protocol validation. Use it to health-check a store that isn't in strict Engramory
+  format — e.g. a host-native auto-memory store — without the schema noise. The
+  default stays strict (full validation). +2 tests (56 total).
+
+## 0.1.7 — 2026-06-14
+
+Fourth Codex round — make the "validator" actually validate, plus competitor-fact
+and OSS-hygiene fixes.
+
+Fixed
+- **doctor is now a real protocol validator** (it had reported non-compliant stores
+  as clean). Missing required `name`/`description`/`type`/`created`/`updated`, an
+  invalid `type`, a non-calendar date (e.g. `2026-99-99`), malformed frontmatter /
+  unclosed quotes, and missing `Why:` / `How to apply:` on feedback/project notes
+  are now ISSUE (exit 1), not info; the `Why:`/`How:` check tolerates `**bold**`.
+  The frontmatter grammar is a restricted `key: value` form (still zero-dependency).
+
+Changed (docs accuracy)
+- **README:** the "Claude Code uses the same four types" line now cites
+  anthropics/claude-code#58840 (system prompt) and notes the public docs show only
+  the index + topic files; the basic-memory cell is "schema + overwrite checks"
+  (not "hygiene, not enforced"); OpenAI Codex is credited as shipped memory; the
+  pre-write deny hooks list no longer singles out Codex as immature.
+- **PORTING / SKILL §9:** hosts treating memory as managed/generated state (Letta,
+  Codex's local Memories) cannot be ridden — use their rules and keep the Engramory
+  store separate.
+- **README:** added a **Known limitations** section (no versioning / provenance /
+  scope / concurrency; personal-scale) — a store-level manifest is roadmap.
+
+Added
+- **CI:** GitHub Actions runs both test suites on Ubuntu + Windows × Python 3.8/3.12.
+- +4 doctor validation tests (54 total).
+
+## 0.1.6 — 2026-06-14
+
+Changed (docs)
+- **README EN banner drift fix:** it still said the cap is "always-on" while the zh
+  banner and SKILL §8 had been corrected; the EN banner now matches — deterministic
+  for the matched direct-edit tools, not a global write guard, single-writer assumed.
+- **Tagline** sharpened to the accurate scope: "a strict curation discipline plus a
+  validator for small-scale, local, file-based agent memory" (cross-agent stays the
+  stated goal, not a present-tense claim).
+- **Prior art:** credit Andrej Karpathy's LLM Wiki / Knowledge Base (markdown-over-RAG),
+  noting it targets a knowledge encyclopedia where Engramory targets agent working
+  memory. Fixed a leftover "the skill applies" → "the protocol applies".
+
+## 0.1.5 — 2026-06-14
+
+Fixed
+- **doctor:** the note `name`-vs-filename check now ignores `-`/`_`/case, so a store
+  written by the host (e.g. Claude Code uses `a-b` names with `a_b.md` filenames) is
+  no longer flagged with spurious name-mismatch info; nested frontmatter (a
+  `metadata:` block) is still read. +1 test (50 total).
+
+## 0.1.4 — 2026-06-14
+
+Positioning & protocol-rigor pass (third external Codex round). Repo history was
+consolidated into a single clean commit before this release, so the earlier
+"internal paths in history" caveat no longer applies. No breaking code changes.
+
+Changed (honesty / scope)
+- **Reliability (SKILL §8, SECURITY.md):** the cap hook is **deterministic only for
+  the matched direct-edit tools** (`Edit | Write | MultiEdit`) — writes via Bash, MCP
+  file tools, external editors, or sync clients are NOT intercepted. Dropped the
+  "always-on and deterministic / globally reliable" framing.
+- **Trust model (SKILL §2/§4, SECURITY.md):** reconciled feedback-as-behavior with
+  recall-as-fallible-background — recalled memory is advisory, never overrides the
+  user's live instructions or safety, and the store is treated as
+  attacker-influenceable (a tampered note can be a stored prompt injection).
+- **Skill vs rules:** removed the leftover "the discipline is a skill loaded by
+  relevance" line (SKILL §8) that contradicted the 0.1.3 repositioning.
+- **Comparison & differentiators (README):** corrected the unfair "mem0/Zep = facts
+  only / opaque" cell (they support preferences/episodic/procedural; Zep supports a
+  custom ontology) and the "least prior art" claim (the semantic/episodic/procedural
+  split is CoALA / LangMem / mem0 prior art).
+- **Concurrency:** documented the single-writer / serialized-writes assumption.
+
+Added
+- **doctor protocol lint:** `engramory_doctor.py` now validates note frontmatter
+  (`description` and a valid `type` are required; `name` should equal the filename
+  slug; `created`/`updated` should be ISO dates; feedback/project notes should carry
+  `Why:` / `How to apply:`) and flags notes reachable only via a `[[wikilink]]` (not
+  in the index, so they won't load at session start). It was previously only a
+  reference/orphan checker. +6 tests (49 total).
+
+## 0.1.3 — 2026-06-14
+
+Second audit round (external Codex review). Fixes real issues the first pass missed
+— including a doc claim that was wrong in the *opposite* direction.
+
+Fixed
+- **hook:** the non-blocking nudge (warn / over-but-shrinking) now emits
+  `additionalContext` with NO `permissionDecision`, instead of
+  `permissionDecision: "defer"`. Omitting the decision is the documented way to add
+  context without affecting the permission flow, and is unambiguous across Claude
+  Code's interactive and non-interactive modes (where `"defer"` behaves
+  differently). Blocking still uses `deny`; the hook still never emits `allow`.
+- **hook:** `ENGRAMORY_INDEX_PATH` matching now uses `normcase` + `realpath`, so a
+  Windows case difference (`E:\Memory` vs `e:\memory`) or a symlink can't slip an
+  edit to the guarded index past the gate.
+- **doctor:** index pointers now resolve to the actual pointed path instead of a
+  loose basename match — `wrong/path/a.md` is correctly flagged missing even when
+  some `a.md` exists elsewhere, and a pointer escaping the store root
+  (`../outside.md`) is flagged.
+- **settings.snippet.json:** the script path is double-quoted so an install path
+  with spaces (e.g. `Program Files`) works.
+
+Changed
+- **docs:** the 200-line / 25 KB `MEMORY.md` load window is now stated as
+  *documented* Claude Code behavior (it is — see the official memory docs), not an
+  "empirical, undocumented observation." (The first audit round had wrongly
+  "refuted" this as fabricated.)
+- **SKILL.md:** removed a `user`-vs-`feedback` contradiction (a reply-language
+  preference is `feedback`, not `user`); the warn-threshold wording now matches the
+  code's strict `> 150 / > 20 KB` (was "≥").
+- +2 tests (43 total): doctor wrong-subpath and root-escape pointer checks; the
+  warn/shrink assertions updated for the context-only nudge.
+
+## 0.1.2 — 2026-06-14
+
+Audit pass (multi-agent review + adversarial verification). No breaking changes —
+all fixes are hardening, doc accuracy, and open-source readiness.
+
+Fixed
+- **doctor:** `templates/` / `archive/` exclusion now matches the first path
+  component, not a raw string prefix (it no longer wrongly skips a sibling like
+  `templates-old/`); index-pointer parsing resolves anchored / titled links
+  (`note.md#sec`, `note.md "Title"`) and ignores external `.md` URLs; duplicate
+  note slugs across dirs are reported instead of silently masking an orphan;
+  unreadable files degrade to a reported issue instead of a traceback; byte size is
+  measured on raw bytes (consistent with the hook / check on non-UTF-8 input).
+- **check:** a usage error now exits `64` and an unreadable index exits `66`
+  (distinct from the `0/1/2` OK/WARN/OVER result, so automation can tell
+  "could not check" from "index is fine").
+- **hook:** a non-positive (`0` / negative) env cap falls back to the default
+  instead of bricking all index edits; the deny reason now points a surprised user
+  at `ENGRAMORY_INDEX_PATH`; cap byte display and line pluralization tidied.
+
+Changed
+- LICENSE copyright holder → `Beijing Tinqiao Technology Co., Ltd.`
+- Removed parent-project references from examples & templates (neutral, fictional
+  illustrations only).
+- README: added a **Security & privacy** section and a Python 3.8+ requirement.
+- README.zh-CN: backported the stale 0.1.1 portability section and fixed a version
+  self-contradiction (now matches the English README).
+- Added `CONTRIBUTING.md` and `SECURITY.md`.
+- +10 tests (41 total): check exit codes, byte-dimension shrink-defer,
+  never-allow for Edit/MultiEdit, non-positive-env fallback, and doctor
+  exclusion / anchored-pointer / url-pointer / duplicate-slug.
+
+## 0.1.1 — 2026-06-13
+
+Added
+- **Portability layer** so non-Claude-Code hosts (Hermes, Cursor, Cline, Codex, …)
+  can use Engramory: `PORTING.md` — per-host wiring (always-on rules, riding the
+  host's own memory store) + the size-cap degradation ladder.
+- `tools/engramory_check.py` — standalone index-size check; the no-hard-hook
+  degradation. Run it after writing the index; exit code 0/1/2 = OK/WARN/OVER.
+- `tools/engramory_doctor.py` — consistency backstop: flags an over-cap index,
+  broken index pointers, and orphan notes (forward-ref `[[wikilinks]]` = info).
+- SKILL.md §9 (portability & degradation ladder); README porting guide.
+- +10 tool tests (31 total).
+
+## 0.1.0 — 2026-06-13
+
+First experimental release, as **engramory** (renamed from the too-common "engram").
+
+- Curated, file-based memory **discipline** — no DB, no vectors: a four-type
+  ontology (`user | feedback | project | reference`), one-file-one-fact atomic
+  notes, a pointer-only `MEMORY.md` index, and an enforced curation contract.
+- PreToolUse hard-cap hook (`hooks/engramory_index_guard.py`): line + byte caps;
+  denies only edits that GROW an over-cap index (shrinking/compaction always
+  allowed); never auto-approves; sequential Edit/MultiEdit simulation; fail-safe
+  on non-UTF-8 / malformed env. 21 tests.
+- Honest positioning: a discipline layer on the markdown-memory pattern, not a new
+  architecture. 0.1 / experimental — deterministic only on Claude Code.
+- Hardened via an external Codex audit + a multi-agent adversarial verify pass.

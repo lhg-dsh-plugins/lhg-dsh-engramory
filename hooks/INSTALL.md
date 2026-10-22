@@ -1,0 +1,203 @@
+# Installing Engramory
+
+Engramory is a memory **protocol**, not a skill — its discipline must fire on
+*every* task, so it loads primarily as **standing rules**, with `SKILL.md` as the
+full reference (optionally registered as a skill) and a hook for the hard cap.
+
+## 1. Load the discipline as standing rules (primary)
+
+Paste [`rules-snippet.md`](../rules-snippet.md) into your host's **always-loaded**
+rules so the protocol applies on every task (not just when a skill happens to load
+by relevance):
+
+- **Claude Code:** `%USERPROFILE%\.claude\CLAUDE.md` (Windows) / `~/.claude/CLAUDE.md`
+  (macOS / Linux) for all projects, or the project's `CLAUDE.md`.
+- **Codex:** `AGENTS.md` (global `~/.codex/AGENTS.md` or per-project).
+- **Cursor / Cline / Windsurf:** `.cursor/rules` / `.clinerules` / `.windsurfrules`.
+
+## 2. (Optional) Register the full spec as a skill — Claude Code
+
+The standing rules carry the trigger; [`SKILL.md`](../SKILL.md) is the complete
+protocol. On Claude Code you can ALSO register it as an Agent Skill so the full
+reference loads on demand — copy or symlink the folder so `SKILL.md` lands at:
+
+- **Windows:** `%USERPROFILE%\.claude\skills\engramory\SKILL.md`
+- **macOS / Linux:** `~/.claude/skills/engramory/SKILL.md`
+- Project-only: `<project>/.claude/skills/engramory/SKILL.md`
+
+Symlink keeps this repo as the single source of truth, e.g. on Windows
+(PowerShell, admin):
+
+```powershell
+New-Item -ItemType SymbolicLink `
+  -Path "$env:USERPROFILE\.claude\skills\engramory" `
+  -Target "<ABSOLUTE_PATH_TO>\engramory"   # the folder that contains SKILL.md
+```
+
+Minimal `SKILL.md` frontmatter is just `name` + `description`; both are already
+set. Claude reads the `description` to decide when to load the skill.
+
+## 3. The hard-cap hook (deterministic enforcement)
+
+The standing rules' 150/200 behavior is model-followed; the hook is the
+*deterministic backstop* for the matched edit tools (`Edit|Write|MultiEdit`) — the
+model cannot skip it on those calls, but writes outside them (a shell command, an
+MCP file tool) are not intercepted (SKILL.md §8). It's written and tested for Claude
+Code only. Some other hosts expose a pre-write deny you can adapt the shim to (Hermes —
+whose `pre_tool_call` has a reported non-firing bug in some worker contexts, #25204;
+Cursor, though its is newer/flaky); OpenClaw blocks only via a `before_tool_call` plugin,
+and some hosts have none — see PORTING.md (coverage varies by host and version — you verify it).
+
+1. Open your settings file (`%USERPROFILE%\.claude\settings.json` for all
+   projects, or `.claude/settings.json` for one project).
+2. Merge in the `hooks` block from [`settings.snippet.json`](settings.snippet.json).
+   It uses the **exec form** (`"command"` = the interpreter, `"args"` = its argument
+   list): Claude Code spawns it directly with **no shell**, so the script path in `args`
+   is passed literally — no backslash-escaping and no quoting, even under `Program Files`
+   or on Windows.
+3. Put the absolute path to `engramory_index_guard.py` in `args`.
+4. Set `"command"` to the Python that should run it:
+   - **macOS / Linux:** `python3` (a bare `python` frequently does not exist here — the
+     old shell-form snippet failed silently on such systems).
+   - **Windows:** `python`.
+   - **Most robust on any OS:** the absolute interpreter path from
+     `python -c "import sys; print(sys.executable)"` (e.g. `C:\Python312\python.exe`),
+     which sidesteps the `python`-vs-`python3` question entirely.
+
+> ⚠️ **Verify the hook actually fires after installing.** If the interpreter in
+> `"command"` cannot be spawned at all — e.g. `python3` on a stock Windows, where
+> only `python` exists (or `python3` is a Microsoft Store stub) — Claude Code
+> treats it as a *non-blocking* hook error and lets the tool call proceed: the
+> guard silently never gates anything. Quick self-test: ask the agent to Write a
+> 250-line file named `MEMORY.md` in a scratch folder — the write must be
+> **denied** with the Engramory message (by default the hook gates *any* file
+> named `MEMORY.md`, so a scratch copy exercises it; delete the folder after).
+
+The hook fires on every `Edit` / `Write` / `MultiEdit`, returns instantly for any
+file that isn't the index, and only acts when the target's filename is the index
+(default `MEMORY.md`).
+
+### Hook configuration (environment variables, all optional)
+
+| var | default | meaning |
+|---|---|---|
+| `ENGRAMORY_HARD` | `200` | hard line ceiling — edits that grow past it are denied |
+| `ENGRAMORY_WARN` | `150` | soft line warning — model is nudged to compact |
+| `ENGRAMORY_HARD_BYTES` | `25600` | hard byte ceiling (25 KB) — growth past it is denied |
+| `ENGRAMORY_WARN_BYTES` | `20480` | soft byte warning (20 KB) |
+| `ENGRAMORY_LINE_WARN_BYTES` | `200` | per-line prose budget — an index line whose text, with its `](path.md)` targets and `[[wikilinks]]` removed, exceeds this is content leaking into the index; the hook nudges (never denies) when an edit adds one, and `engramory_doctor.py` reports the existing ones |
+| `ENGRAMORY_INDEX_NAME` | `MEMORY.md` | which filename counts as the index |
+| `ENGRAMORY_INDEX_PATH` | — | absolute path of the one index to guard (use when several `MEMORY.md` files exist; overrides name matching) |
+
+> ⚠️ **If you keep any OTHER file named `MEMORY.md`** (project docs, this repo's own
+> `templates/MEMORY.md`, …), set `ENGRAMORY_INDEX_PATH` to the absolute path of your
+> real index so the hook only gates that one file. Otherwise a legitimate edit that
+> grows the unrelated `MEMORY.md` past the cap is denied (the deny message also
+> reminds you of this opt-out).
+
+Requires **Python 3.9+** (for the hook and the `tools/` scripts; `python3` on most
+systems).
+
+## 4. Point `<MEMORY_ROOT>` at your memory directory
+
+Tell the agent where memory lives. You may reuse the host's native memory
+directory **only when it is a plain directory of files you control** (Claude
+Code). If the host *manages* its own memory — Codex's native Memories,
+OpenClaw's auto-written store, Hermes's managed files — point Engramory at a
+**separate folder** instead; two writers with different house styles will fight
+over the same files (SKILL.md §0).
+If it's inside a git repo, confirm it is `.gitignore`d — memories often hold
+machine-local detail (server IPs, ssh paths, serial numbers). Never write a
+secret's *value* into memory at all (keys, tokens, passwords) — see SKILL.md §5.
+
+## 5. Other agents (Cursor, Cline, Codex, OpenClaw, Windsurf, …)
+
+Step 1 already covers them: paste [`rules-snippet.md`](../rules-snippet.md) (or the
+body of [`SKILL.md`](../SKILL.md)) into the agent's always-loaded rules. The
+150/200 guard then applies via the instructions; for the deterministic cap, adapt
+the hook to the host's pre-write deny hook or run `tools/engramory_check.py` after
+each index write. Full per-host wiring is in [PORTING.md](../PORTING.md).
+
+For **Codex**, **OpenClaw** and **dsh**, prefer the init helper instead of manually pasting:
+
+```sh
+python tools/engramory_init.py codex    --project-root <repo> --install-skill
+python tools/engramory_init.py openclaw                       --install-skill   # -> ~/.openclaw/workspace
+python tools/engramory_init.py dsh                            --install-skill   # -> $DSH_HOME (else ~/.dsh)
+```
+
+Each creates the memory template, adds a marked block to `AGENTS.md`, optionally
+copies the skill into the root that host actually scans (Codex/OpenClaw:
+`.agents/skills/engramory`; dsh: `$DSH_HOME/skills/engramory` globally,
+`<project>/.dsh/skills/engramory` in a project), and keeps the Engramory store
+separate from the host's own memory. See
+[adapters/codex/README.md](../adapters/codex/README.md),
+[adapters/openclaw/README.md](../adapters/openclaw/README.md) and
+[adapters/dsh/README.md](../adapters/dsh/README.md).
+
+To let a host **recall** (read-only) from a store another agent owns and writes — e.g.
+Claude Code's native memory — use a `<host>-reader` host (it creates no store and never
+writes; `--memory-root` must be an existing store; it lands in that host's own rules file):
+
+```sh
+python tools/engramory_init.py codex-reader --project-root ~/.codex \
+  --memory-root ~/.claude/projects/<project>/memory
+```
+
+Reader hosts: `codex-reader` and `dsh-reader` (dogfooded) plus `claude-reader`, `cursor-reader`,
+`kiro-reader`, `cline-reader`, `windsurf-reader`, `openclaw-reader`, `hermes-reader` (wired
+from documented formats, printed with an "unverified" note). See
+[adapters/reader/README.md](../adapters/reader/README.md).
+
+## 6. Optional Codex lifecycle assistance
+
+This is separate from the Claude Code index-size hook above. Install the managed
+Codex project hooks with:
+
+```sh
+python tools/engramory_init.py codex --project-root <repo> \
+  --install-skill --install-hooks --mode explicit
+```
+
+`explicit` is the default. `--mode assisted` additionally asks the agent to sync
+at meaningful milestones; it still does not write a semantic summary in the
+background. The installed hook contract is:
+
+| Codex event | Lifecycle-hook behavior |
+|---|---|
+| `SessionStart` | Remind the agent to recall from the canonical `MEMORY.md`; surface `needs_reconcile` if an earlier automatic transition could not be synced. |
+| `UserPromptSubmit` | Conservatively mark continuity `dirty`. Do not infer, classify, or write a memory from the prompt alone. |
+| `PreCompact` (manual) | If dirty/unreconciled, gate manual compaction until the explicit unified sync and `mark-synced` complete, then retry. |
+| `PreCompact` (automatic, missing, or unknown trigger) | **Fail open** with a visible warning; when dirty, keep/set `needs_reconcile`. Never loop-deny a non-manual compact. |
+
+The explicit sync — scan, dedup/update, project, reusable feedback, references,
+retirement, check+doctor, and cold-start sufficiency — is performed by the agent.
+A hook can schedule or apply back-pressure to that work; it cannot truthfully
+claim that it generated a complete semantic summary.
+
+Once that semantic sync and its checks genuinely finish, run the exact
+`mark-synced` command emitted by the hook. It checks that `MEMORY.md` exists,
+stays inside the store, is not a symlink, and is within the hard line/byte caps,
+then records the clean generation/index hash. It does not run semantic curation,
+edit a note, or summarize memory.
+
+Project-scoped hooks run project-controlled code. Inspect them before trusting
+the checkout, trust only projects whose hook code you accept, and use `/hooks` in
+Codex to verify the registered event, source, and enabled state. Re-check
+`/hooks` after configuration changes. If the expected entry is absent or reports
+an error, fall back to explicit sync and the commands documented in the Codex
+adapter.
+
+The installer manages `.codex/hooks.json` plus scripts under
+`.codex/engramory/`, while preserving unrelated handlers. Review both before
+granting project trust.
+
+The shim was implemented against and source-checked against the **Codex CLI
+0.144.1** command-hook schema and behavior. The Python lifecycle runtime and the
+generated `cmd.exe`/PowerShell launch path have black-box coverage; project hook
+discovery, trust, and execution inside a real Codex host still need to be
+confirmed with `/hooks`. This is an implementation target, **not** a claimed
+minimum version or end-to-end host certification. For another version, compare
+the [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
+and use `/hooks` to verify the installed entries; if they are missing or
+incompatible, degrade to explicit sync.

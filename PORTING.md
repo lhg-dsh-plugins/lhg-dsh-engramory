@@ -1,0 +1,254 @@
+# Porting Engramory to other hosts
+
+Engramory is a **discipline, not a storage engine.** It ships no database or
+memory store of its own — it imposes structure (one-file-per-fact typed notes + a
+pointer-only index) and curation discipline on whatever memory + instruction
+mechanism your agent host already has. So "porting" is mostly wiring, not code.
+
+The model doesn't matter (DeepSeek, GPT, Llama, Claude all work). The host needs
+two things: a way to keep rules in context, and file read/write. Four steps:
+
+## 1. Make the discipline always-on (not just a by-relevance skill)
+
+A skill that loads "when relevant" won't fire on every task, so "check memory at
+the start of a task" is not reliable from a skill alone. Put the short pointer in
+the host's **always-loaded** instructions:
+
+| Host | Always-loaded file | Also supports a SKILL.md? |
+|---|---|---|
+| Claude Code | `CLAUDE.md` / `~/.claude/CLAUDE.md` | yes (Agent Skills) |
+| Codex | `AGENTS.md` (`~/.codex/AGENTS.md` or project `AGENTS.md`) | yes (`.agents/skills`) |
+| OpenClaw | `AGENTS.md` (in `~/.openclaw/workspace`) | yes (auto-discovers `.agents/skills`) |
+| DeepSeek Harness (dsh) | `AGENTS.md` (`$DSH_HOME/AGENTS.md` or project `AGENTS.md`) | yes (skill roots: `$DSH_HOME/skills`, project `.dsh/skills` / `.agents/skills`) |
+| Kiro | `.kiro/steering/*.md` with `inclusion: always` (or `AGENTS.md`) | yes (`SKILL.md` as an `inclusion: manual`/`auto` steering file, or a Kiro skill) |
+| Hermes (Nous) | `AGENTS.md` / `.hermes.md` (rules) — **not** `SOUL.md` (persona slot) | yes (skills system) |
+| Cursor | `.cursor/rules/*.mdc` (`alwaysApply: true`) | yes (auto-discovers `.agents/skills`) |
+| Trae | `.trae/rules/project_rules.md` or `AGENTS.md` | yes (`.agents/skills`, enable in settings) |
+| Cline / Windsurf | their rules / system-prompt file | varies |
+
+Paste [`rules-snippet.md`](rules-snippet.md) into that always-loaded file. If the
+host also supports skills, additionally import [`SKILL.md`](SKILL.md) for the full
+protocol — the always-loaded snippet guarantees the behaviour fires; the skill
+carries the detail.
+
+## 2. Choose one canonical `<MEMORY_ROOT>` — and make Engramory its authority
+
+Don't create a second handoff store or another Engramory writer. Reuse the memory
+directory the host already loads when it is editable and suitable:
+- Claude Code → its auto-memory dir (the `MEMORY.md` it injects each session).
+
+⚠️ Hosts that **auto-write** their memory (Claude, Hermes) have their own house
+style, which fights Engramory's structure (one-file-one-fact, pointer-only index,
+four types). Resolve it by making Engramory's rules the **authority** for that
+store — put the SKILL / snippet where it shapes how the host writes memory
+(Claude Code: `CLAUDE.md`; Hermes: `AGENTS.md` / `.hermes.md`, **not** `SOUL.md`,
+which is the persona/identity slot), so one store follows one set of rules instead
+of two writers fighting in the same file.
+
+⚠️ **Hermes is a special case — don't try to take over its native memory.** Its
+built-in `memory` tool writes a *frozen-snapshot* `MEMORY.md` + `USER.md`
+(`~/.hermes/memories/`) that are **already hard-capped in code** (2,200 / 1,375 chars
+≈ 1,300 tokens total) with error back-pressure + exact-duplicate rejection — so
+Engramory's index cap is redundant there, and its files-plus-index *recall*
+model doesn't fit a single always-injected file. What that native store *lacks* — the
+typed ontology, required **Why:** / **How to apply:**, and the negative-scope rule — is
+exactly Engramory's value-add. So on Hermes, run Engramory as a **separate plain-file
+store** (like the Codex adapter) with the discipline injected via `AGENTS.md`; keep it
+distinct from the managed `memory`-tool store.
+
+⚠️ But some hosts treat their memory as **generated / managed state not meant for
+hand-editing** (Letta's memory blocks; OpenAI Codex's local Memories). You cannot
+make Engramory the authority over a store like that — there is no agent-visible
+file to curate, and editing it fights the host's manager. There, apply the
+discipline via the host's **rules** (`AGENTS.md`, etc.) and keep the Engramory
+store **separate** (a plain folder you control); don't try to take over the managed
+store. For Codex, `tools/engramory_init.py codex --project-root <repo>
+--install-skill` performs that wiring and points `AGENTS.md` at the separate
+store.
+
+⚠️ **Kiro — keep the notes OUT of `.kiro/steering/` or you will blow up the context.**
+Kiro's always-loaded channel is steering, and a steering file with no `inclusion`
+front-matter **defaults to `inclusion: always`** — so dumping the whole store into
+`.kiro/steering/` (or adding `file://.kiro/steering/**/*.md` to a custom agent's
+`resources`) loads **every note into every request** and overflows the window. Put only
+**one** always-on steering file (`.kiro/steering/engramory.md`, `inclusion: always`)
+that pulls in the index via a live `#[[file:.engramory-memory/MEMORY.md]]` reference, and
+keep the notes in a **non-steering** `.engramory-memory/` folder the agent opens on
+demand. `.gitignore` the store but commit the steering pointer; do NOT add the store to
+`.kiroignore` (that would stop the agent reading its own memory). Full wiring +
+ready-to-copy template: [adapters/kiro/README.md](adapters/kiro/README.md).
+
+## 3. Wire continuity sync — explicit first, hooks optional
+
+Task continuity stays in an ordinary `project` note in the canonical store:
+current goal, status, decisions, constraints, blockers, and next concrete step.
+A task keeps **at most one** such note, updated in place — never a dated series.
+When a task ends, the completion checkpoint (`SKILL.md` §5) decides what survives;
+it is a judgement a host can prompt but never perform.
+`feedback` is only for a correction or workflow reusable beyond the task. A
+resumed agent must re-check any branch, file, commit, command, or test-result
+pointer against the live environment.
+
+Every host with rules plus file access can support **explicit sync** before a
+deliberate compact, clear, or new thread:
+
+1. scan the task;
+2. dedup/update existing notes;
+3. refresh project state;
+4. promote only reusable feedback and durable reference pointers;
+5. archive/delete stale or completed transient state;
+6. run `engramory_check.py` plus `engramory_doctor.py`;
+7. confirm a cold-started agent could continue from the repo and store alone;
+8. report added/updated/archived/skipped (with reasons), index size, and verdict.
+
+Lifecycle hooks are only an assisted trigger layer. For Codex, the intended
+contract is: `SessionStart` reminds recall; `UserPromptSubmit` marks continuity
+dirty; a manual `PreCompact` gates while dirty until explicit sync; an automatic
+`PreCompact` must fail open with a warning and retain `needs_reconcile` so it
+cannot deadlock compaction. A missing/unknown trigger also fails open with a
+visible warning and marks `needs_reconcile` when dirty.
+Hooks do not understand the conversation or generate a guaranteed semantic
+summary. Install the Codex shim with `engramory_init.py codex --install-hooks`;
+`--mode explicit` is the default, while `--mode assisted` adds proactive
+milestone reminders but still depends on an agent-run semantic sync.
+
+Project hooks execute project-controlled code: review and trust the checkout,
+then use Codex `/hooks` to verify event/source/enabled state. On another host,
+map the same semantics only to lifecycle events whose payload and blocking
+behavior you have verified; otherwise use explicit sync alone.
+
+## 4. Enforce the size cap — the degradation ladder (no PreToolUse hook)
+
+The cap stops the index growing past the host's load window. Strongest → softest:
+
+1. **Pre-write deny hook:** `hooks/engramory_index_guard.py` runs on every matching
+   edit-tool call (`Edit|Write|MultiEdit`) and can DENY one that would grow the index
+   past the cap — deterministic for those tools, not for other write channels
+   (SKILL.md §8). It's written for **Claude Code's** hook format. Other hosts' pre-write deny mechanisms vary and
+   are **not interchangeable**, so each needs its own shim.
+
+   > ⚠️ **The per-host notes below are a snapshot, last checked 2026-07-26, and
+   > carry no version guarantee.** Hook APIs on these hosts are young and move
+   > fast — Kiro's CLI, for one, has already reorganised hooks across a major
+   > version. Treat each entry as a starting point: **check the host's current
+   > official docs, then verify on the real host** before relying on any of it.
+   > A claim here that has quietly gone stale is exactly the kind of drift this
+   > project tells you not to trust in a memory note.
+   - **Hermes** — a `pre_tool_call` shell hook can block a tool call; matcher
+     `write_file|patch` catches the agent's *file* writes (an Engramory separate-store
+     index), but **not** Hermes's native `memory` tool — which is already code-capped, so
+     it needs no hook. Caveat: `pre_tool_call` shell hooks have a reported non-firing bug
+     in some worker/dispatch contexts (issue #25204) — verify it fires before relying on it.
+   - **Cursor** — a generic `preToolUse` hook can deny `Edit|Write` (newer, and
+     reported flaky on Windows in 2026 — verify before relying on it).
+   - **Kiro** — a CLI `PreToolUse` hook with `matcher: fs_write` can `exit 2` to deny a
+     write (stderr returned to the agent), the same shape as the Claude Code guard. But
+     the IDE may pass empty `toolArgs` (issue #7375, so a content/path deny is CLI-only)
+     and the CLI hook is reported broken on Windows 11 (issue #8264) — verify it fires
+     first. Until that shim is written and tested, use rung 2. See
+     [adapters/kiro/README.md](adapters/kiro/README.md).
+   - **OpenClaw** — blocks via a `before_tool_call` *plugin* (TypeScript, `block: true`),
+     **not** a shell hook, so the Python guard does not drop in.
+   - **Trae** — has **no** pre-write deny (only post-write review/undo), so the cap
+     can't be deterministic there; use rung 2.
+
+   So the cap is portable *in principle* on hosts with a real pre-write deny — and
+   **two shims here are written, tested, AND running**: the Claude Code hook and the
+   dsh plugin (`adapters/dsh/plugin/`, `dsh-engramory` 0.2.1+ — 0.2.0 never
+   activated, issue #8); for the others you write
+   and verify the shim yourself. See `hooks/INSTALL.md`.
+2. **Agent-invoked check (any host with a shell):** after writing the index, run
+   `python tools/engramory_check.py <MEMORY.md>` and compact if it says `OVER`.
+   Add that instruction to the rules. Hermes / Cursor / Cline / Codex all have
+   shell or file tools, so this works — but it's best-effort (the agent must run
+   it). Exit code 0/1/2 = OK/WARN/OVER for scripting (64 = usage error, 66 =
+   index unreadable — both distinct from a real 0/1/2 result so a caller can tell
+   "could not check" from "index is fine").
+3. **Model discipline:** SKILL §6 — count lines/bytes before writing the index.
+4. **Periodic backstop:** `python tools/engramory_doctor.py <MEMORY_ROOT>` flags
+   an over-cap index, broken pointers, and orphan notes — and validates each note's
+   frontmatter against the protocol. Add `--no-schema` to skip the frontmatter
+   checks and run structure-only (handy on a store that isn't in strict Engramory
+   format yet, e.g. a host-native auto-memory store).
+
+**Honest limit.** A *deterministic* guarantee is shipped and tested only for the
+host whose adapter lives in this repo — today **Claude Code**
+(`hooks/engramory_index_guard.py`). The same pattern ports to hosts with a real
+pre-write deny (Hermes and Cursor; OpenClaw only via a TypeScript `before_tool_call`
+plugin), but those shims are not written or verified here — portable in principle,
+build and verify your own. Hosts with no pre-write deny at all (e.g. Trae) get rung 2. If a host writes its memory
+**internally** — not through a tool that an agent step or hook can see (e.g. Letta)
+— even the step-2 check can't intercept that write; there the cap is pure
+discipline. So the cap is deterministic on the handful of hosts with such a hook,
+and best-effort discipline everywhere else. This is why Engramory is 0.x /
+experimental: set expectations accordingly and don't sell the cap as guaranteed on
+a host without a pre-write deny hook.
+
+## Adopting an existing store
+
+Pointing Engramory at a store that predates it (e.g. a host's auto-memory dir with
+dozens of notes) fails the strict `doctor` on day one — mostly mechanical gaps
+(`created:`/`updated:` absent, Why/How not yet in label form), not real rot. Don't
+hand-fix hundreds of issues blind — triage:
+
+1. **Structure first:** `engramory_doctor.py <root> --no-schema` and get the
+   structural problems (broken pointers, orphans, duplicate slugs) to zero by hand —
+   those genuinely need a human.
+2. **Backfill dates mechanically.** There is no migration *tool* for note content
+   (by design — `engramory_check` and `engramory_doctor` never write; `init` writes
+   only setup files and `sync` only its bookkeeping state), but a one-off stdlib
+   snippet fills only the missing
+   `created:`/`updated:`. Run it on a copy / clean git, dry-run first, and note that
+   **mtime is the file's timestamp, not necessarily the fact's** real last-update:
+
+   ```python
+   import os, re, datetime, glob
+   for p in glob.glob("<root>/*.md"):
+       if os.path.basename(p) == "MEMORY.md":
+           continue
+       t = open(p, encoding="utf-8").read()
+       if not t.startswith("---"):
+           continue
+       end = t.find("\n---", 3)                 # end of the frontmatter block
+       fm = t[:end]
+       d = datetime.date.fromtimestamp(os.path.getmtime(p)).isoformat()
+       add = "".join(f"\n{k}: {d}" for k in ("created", "updated")
+                     if not re.search(rf"(?m)^{k}:", fm))
+       if add:
+           print(p, "->", add.replace(chr(10), " "))   # dry-run: review first
+           # open(p, "w", encoding="utf-8").write(fm + add + t[end:])
+   ```
+3. **Re-run strict `doctor`** and work the bucketed summary it prints
+   (`N missing-why-how, …`). Write the Why/How lines **by hand** — that reflection is
+   the whole point of those types and isn't something a script should fabricate.
+
+## Quick port checklist
+
+- [ ] `rules-snippet.md` pasted into the host's always-loaded instructions
+- [ ] `SKILL.md` imported as a skill too (if supported)
+- [ ] one canonical `<MEMORY_ROOT>` selected; no second handoff store or writer
+- [ ] explicit continuity sync wired; lifecycle hooks, if any, documented as assistance only
+- [ ] store git-ignored if inside a repo (it holds machine-local detail)
+- [ ] size cap wired at the strongest rung the host supports (hook → check → discipline)
+- [ ] `engramory_doctor.py` runnable as an occasional backstop
+
+Init helpers (Codex, OpenClaw, dsh) — wire `AGENTS.md` + the skill + a separate store in one go:
+
+```sh
+python tools/engramory_init.py codex    --project-root <repo> --install-skill
+python tools/engramory_init.py codex    --project-root <repo> --install-skill --install-hooks --mode explicit
+python tools/engramory_init.py openclaw                       --install-skill   # -> ~/.openclaw/workspace
+python tools/engramory_init.py dsh                            --install-skill   # -> $DSH_HOME (else ~/.dsh)
+```
+
+See [adapters/codex/README.md](adapters/codex/README.md),
+[adapters/openclaw/README.md](adapters/openclaw/README.md) and
+[adapters/dsh/README.md](adapters/dsh/README.md) for the exact behavior and
+limitations (all three enforce the cap by rules + `engramory_check.py`, not a
+deterministic hook; dsh additionally has a deterministic guard plugin, `dsh-engramory` —
+use 0.2.1+, the first version that activates on a real profile: issue #8).
+
+Kiro has no init helper yet — wire it manually (one always-on steering file + a
+non-steering `.engramory-memory/` store) per
+[adapters/kiro/README.md](adapters/kiro/README.md), which also ships a ready-to-copy
+[steering template](adapters/kiro/steering-engramory.md).
